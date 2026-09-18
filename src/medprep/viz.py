@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import contextlib
 import math
+import re
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -770,6 +771,22 @@ class FigureSet:
 
     def __len__(self):
         return len(self.figures)
+
+    def save_all(self, directory, *, dpi: int = 300, prefix: str = "") -> list:
+        """全部の図を PNG で保存し、書いたファイルの一覧を返す。
+
+        ファイル名は見出しから作る。**ファイル名に使えない文字は `_` にする**
+        （Windows では `:` `?` `*` がファイル名に使えず、保存が例外で止まる）。
+        """
+        import os
+        os.makedirs(directory, exist_ok=True)
+        written = []
+        for i, (title, _caption, fig) in enumerate(self.figures, start=1):
+            stem = re.sub(r'[\\/:*?"<>|\s]+', "_", str(title)).strip("_") or f"figure{i}"
+            path = os.path.join(directory, f"{prefix}{i:02d}_{stem}.png")
+            fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor=fig.get_facecolor())
+            written.append(path)
+        return written
 
 
 def overview(df: pd.DataFrame, schema: Schema | None = None, *,

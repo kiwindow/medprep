@@ -243,4 +243,31 @@ print("  → prep_tables.xlsx（表をシート別に）")
 print("  ★症例レベルの値は既定では出していない。"
       "必要なら show_values=True を明示すること。★")
 
-print("\n✅ 通し検証 完了")
+
+
+# ---------------------------------------------------------------- 16) 層1
+STEP("16) 層1 — ここまでの全段を 1 行で（mp.autoprep）")
+print("層2を順に呼ぶだけの薄い層である。層1にしか無い処理は無い。\n")
+
+from medprep import paths as mp_paths
+
+mp_paths.OUTPUT_DIR = os.path.join(os.getcwd(), "_lab_output")   # 検証用の保存先
+mp_paths.WORK_DIR = os.path.join(os.getcwd(), "_lab_work")
+
+auto = mp.autoprep(
+    "synthetic_dialysis_cohort.xlsx",
+    outcome=None,                       # 目的変数は 13) で作った派生列なので層1では使わない
+    group="施設", id_col="仮名ID", date_col="検体採取日",
+    survival_dates=SURV,
+    save=True, method="Preprocessing",
+)
+print()
+print(auto.report())
+
+print("\n  ★run 番号は既存教材と同じ規約で採られている★"
+      "（table / model / figure が空でない run は決して上書きしない）")
+print(f"  ★{len(auto.warnings)} 件の『人の確認が要る事項』が残っている。"
+      "空で返ってくるほうを疑うこと。★")
+viz.close_all()
+
+print("\n✅ 通し検証 完了（全 16 段）")

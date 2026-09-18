@@ -28,6 +28,13 @@
 ------
     import medprep as mp
 
+    # ---- 層1：全自動 1 行（判断はすべて schema.yaml と rep.warnings に残る）
+    rep = mp.autoprep("cohort.xlsx", outcome="eGFR_12m", task="regression",
+                      group="施設", id_col="仮名ID", save=True)
+    rep.show()                      # 段ごとの成否と「人の確認が要る事項」
+    model.fit(rep.X_train, rep.y_train)
+
+    # ---- 層2：1 段ずつ（第3回の演習はこちらを順に実行する）
     # 列の役割を推定し、判断を理由つきで書き出す
     sch = mp.Schema.infer(df, id_col="仮名ID", group="施設")
     sch.to_yaml("schema.yaml")      # 人が直して再実行できる
@@ -78,12 +85,15 @@ __author__ = "Kazuhiro Iwadoh"
 __license__ = "MIT"
 
 from . import (
+    auto,
     clean,
     dates,
     describe,
     hd,
+    loading,
     missing,
     outliers,
+    paths,
     pipeline,
     quality,
     report,
@@ -96,6 +106,7 @@ from . import (
     timing,
     viz,
 )
+from .auto import PrepResult, autoprep, quicklook
 from .clean import CleanReport, build_alias_map, clean_numeric, derive, load_dict
 from .dates import DateParseResult, parse_date_frame, parse_date_series
 from .describe import (
@@ -126,10 +137,12 @@ from .hd import (
     tsat,
     urr,
 )
+from .loading import read_any
 from .missing import MissingReport, drop_missing_outcome, mcar_signals
 from .missing import analyze as analyze_missing
 from .outliers import NanSafeWinsorizer, OutlierReport
 from .outliers import detect as detect_outliers
+from .paths import RunLog, RunPaths, new_run
 from .pipeline import (
     LeakageError,
     Prepared,
@@ -165,10 +178,14 @@ from .timing import POST, PRE, UNKNOWN, TimingSchema, check_requirements, detect
 
 __all__ = [
     "__version__",
+    # 層1（全自動 1 行）
+    "autoprep", "quicklook", "PrepResult",
+    # 読み込みと保存先
+    "read_any", "new_run", "RunPaths", "RunLog",
     # モジュール
-    "clean", "dates", "describe", "hd", "missing", "outliers", "pipeline", "quality",
-    "report", "schema", "splitting", "survival", "survival_input", "tac", "targets",
-    "timing", "viz",
+    "auto", "clean", "dates", "describe", "hd", "loading", "missing", "outliers",
+    "paths", "pipeline", "quality", "report", "schema", "splitting", "survival",
+    "survival_input", "tac", "targets", "timing", "viz",
     # 列の役割とデータ品質監査
     "Schema", "ColumnSpec", "infer_column",
     "audit", "AuditReport", "Finding", "method_change_steps",

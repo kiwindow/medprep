@@ -69,7 +69,72 @@ Python 3.11 / 3.12 / 3.13 に対応（Windows・macOS・Linux で CI を回し�
 
 ## 使い方
 
-### 列の役割を決め、判断を書き出す
+二層あります。**層1（`autoprep()`）は層2を順に呼ぶだけの薄い層**で、
+層1にしか無い処理はありません。層1で見た結果を、そのまま層2で 1 段ずつ分解できます。
+
+### 層1 — 全自動 1 行
+
+```python
+import medprep as mp
+
+rep = mp.autoprep(
+    "dialysis_cohort.xlsx",
+    outcome="1年以内イベント", task="classification",
+    group="施設", id_col="仮名ID", date_col="検体採取日",
+    save=True,              # ~/lab_output/Preprocessing/run{N}/ 以下に全出力
+)
+rep.show()
+model.fit(rep.X_train, rep.y_train)
+```
+
+```
+autoprep  600 行 × 21 列（19.6 秒）
+
+段:
+  ・ 読む  600 行 × 21 列
+  ・ 列の役割を推定する  21 列（うち解析から外す列 3 本）
+  ・ 品質を監査する  致命的 5 / 要確認 1 件
+  ・ 辞書で掃除する  6 列を辞書と照合、派生 2 件
+  ・ 欠損を見る  完全症例 77.7%
+  ・ 外れ値を見る  検出のみ（★ここでは直さない★）
+  ・ train / test に分ける  無作為（層化あり）  train 480 / test 120
+  ・ 前処理を train だけで fit する  26 特徴量（★test には transform しか当てていない★）
+  ・ リークを検査する  6 項目すべて OK
+  ・ 図を描く  10 枚
+  ・ run フォルダに保存する  run1  ~/lab_output/Preprocessing/run1
+
+★人の確認が要る事項 7 件★（空でないのがふつうである）:
+  ✗ 測定法  'ALP' は 2020-04-01（JSCC 法 → IFCC 法）の前後で中央値が 246 → 91 …
+  ✗ train と test で分布が偏っている列がある（|SMD| ≧ 0.2: ['施設', 'ALP']）…
+```
+
+**確認事項が空で返ってきたら、まずそちらを疑ってください。**
+背骨（読む・役割の推定・監査・分割・前処理）で失敗したときは例外で止まります。
+付随するもの（管理目標・生存時間・図）は理由を残して飛ばし、`rep.steps` に全段の成否が残ります。
+
+`mp.quicklook(...)` は分割も前処理もせず、全体を見るだけです。
+
+### 保存先は既存教材の `run{N}` 規約
+
+```
+ローカル: ~/lab_output/{手法名}/run{N}/{table,figure,model,report}/
+Colab  : /content/drive/MyDrive/AI/lab_output/{手法名}/run{N}/...
+ログ    : ~/lab_work/log/history.csv（Excel でそのまま開けます）
+```
+
+`determine_runnumber()` / `create_directory()` は既存ノートブックの実装を
+**そのまま写してあります**。採番を変えると過去の計算結果を上書きしてしまうためです。
+`table/run_info.json` も同じキーで書くので、D&D アプリ（papermill ランチャ）から
+そのまま呼べます。
+
+```python
+p = mp.new_run("Preprocessing")
+fig.savefig(p.file("figure", "km.png"))
+```
+
+### 層2 — 1 段ずつ
+
+#### 列の役割を決め、判断を書き出す
 
 ```python
 import medprep as mp
@@ -91,7 +156,7 @@ sch.to_yaml("schema.yaml")     # 人が直して再実行できる
 **`reason` の無い判断を作りません。** 推定できなかった列は `unknown` にして人に返します。
 `schema.yaml` を直して再実行し、`sch.diff(edited)` で変更点を表にできます。
 
-### このまま解析してよいかを問う
+#### このまま解析してよいかを問う
 
 ```python
 rep = mp.audit(df, sch, id_col="仮名ID", group="施設", date_col="検体採取日")
@@ -117,7 +182,7 @@ rep.show()
 血清鉄が TIBC を超えている／欠測が施設に偏っている／目的変数から導かれた列が
 説明変数に残っている（リーク）。いずれも例外を出さずに通ってしまいます。
 
-### Table 1 を出す（検定の選択理由と効果量つき）
+#### Table 1 を出す（検定の選択理由と効果量つき）
 
 ```python
 t1 = mp.table_one(df, sch, groupby="低Alb")
@@ -145,7 +210,7 @@ CRP [mg/dL]  Mann-Whitney U 検定  Cliff's δ = 0.016
 3 群以上なら事後比較（Tukey HSD / Dunn）まで出します。
 項目名に**単位と採血時点**が付くのは、透析前 BUN と透析後 BUN が同じ表に並ぶからです。
 
-### 管理目標の達成率 — 境界値を必ず見せる
+#### 管理目標の達成率 — 境界値を必ず見せる
 
 ```python
 mp.target_achievement(df, by="施設")
@@ -164,7 +229,7 @@ mp.target_achievement(df, by="施設")
     血色素量    正しく開区間 59.0% / 誤って閉区間 61.8%  → 差 +2.8%（17 例）
 ```
 
-### 生存時間データを日付だけから作る
+#### 生存時間データを日付だけから作る
 
 観察期間を人が計算する必要はありません。**日付を入れれば済むようにしてあります。**
 
@@ -198,7 +263,7 @@ sf.excluded    # 除外された症例（ID・理由・入力されていた元�
 イベント日と打ち切り日の**両方が入っている矛盾**、どちらも空欄、日付の逆転、
 未来日付、観察期間 0 を検出し、症例ごとに理由を付けて除外します。
 
-### HTML 1 枚のレポート
+#### HTML 1 枚のレポート
 
 ```python
 figs = mp.viz.overview(df, sch, achievement=ach, balance=sp.balance)
@@ -227,7 +292,7 @@ mp.build_report(df, sch, audit=aud, missing=ms, outliers=ol, table1=t1,
 関連の強さは順次配色（濃いほど強い）**。色覚特性のある読者のために隣り合う色が
 区別できることを検証し、散布図は 3 色までに抑え、図には必ず表を添えています。
 
-### 分割と前処理 — リークを構造的に不可能にする
+#### 分割と前処理 — リークを構造的に不可能にする
 
 ```python
 sp = mp.split(df, sch, test_size=0.2)     # 先に分ける
@@ -271,7 +336,7 @@ Hb             -0.359
 欠損あり_年齢        -0.226
 ```
 
-### 生存時間解析 — 黙って減る n を見張る
+#### 生存時間解析 — 黙って減る n を見張る
 
 ```python
 s = mp.Survival.from_survival_frame(sf)
@@ -301,7 +366,7 @@ Cox 比例ハザード回帰  n = 508、イベント = 203、共変量 = 6、EPV
 （「生存が良い」ではなく「追跡期間が足りない」という事実です）。
 順序のある群には log-rank trend test も出します。
 
-### 辞書駆動でデータを掃除する
+#### 辞書駆動でデータを掃除する
 
 ```python
 clean, rep = mp.clean_numeric(df)
@@ -318,7 +383,7 @@ rep.show()
 β2マイクログロブリン(β2MG) テキスト欠損表記→NaN  25                     未測定/不明 等
 ```
 
-### 透析指標
+#### 透析指標
 
 ```python
 r = mp.percent_cgr(sex="男性", age=60, bun_pre=60, bun_post=20,
@@ -332,7 +397,7 @@ r.invalid           # 妥当性検査に引っかかった件数と理由
 実装済み: `urr` `sp_ktv` `npcr` `percent_cgr` `clear_space_ratio`（実測法・推算法）
 `salt_intake` `gnri` `corrected_ca` `tsat` `bmi`、および TAC-BUN（簡便式・台形則・時間加重近似）。
 
-### 管理目標の達成判定
+#### 管理目標の達成判定
 
 「5.5 **未満**」に 5.5 は含まれません。この 1 件の取り違えが達成率を数％動かすため、
 辞書側で開区間・閉区間を区別し、**境界値ちょうどの症例数を必ず報告します**。
@@ -402,9 +467,8 @@ uv run python examples/run_e2e.py          # schema → audit → 掃除 → 生
 
 ## 状態
 
-土台の 17 モジュールが動き、以下は実装中です。
-
-- `autoprep()` — 全自動 1 行の結線
+20 モジュールが動き、層1（`autoprep()`）まで通っています。
+残りは第3回の演習ノートブックとスライド、および時系列（第4回以降）です。
 
 進捗は [CHANGELOG.md](CHANGELOG.md) を参照してください。
 

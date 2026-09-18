@@ -31,6 +31,8 @@ data/
 # 実行結果
 lab_output/
 lab_work/
+_lab_output/
+_lab_work/
 run*/
 *.html
 !docs/**/*.html

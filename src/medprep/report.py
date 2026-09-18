@@ -463,7 +463,8 @@ section {{ background: var(--surface); border: 1px solid var(--grid); border-rad
 .fcols, .fex {{ font-size: 13px; color: var(--ink2); margin-top: 4px; }}
 .faction {{ font-size: 13.5px; color: var(--ink2); margin-top: 4px; }}
 .tw {{ overflow-x: auto; margin: 10px 0; }}
-table {{ border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }}
+/* ★横に溢れさせない。★ 溢れた表は横スクロールに隠れ、紙に刷ると『判断の根拠』の右端が消える */
+table {{ border-collapse: collapse; max-width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }}
 caption {{ text-align: left; font-size: 13px; color: var(--ink2); padding-bottom: 6px; }}
 th, td {{ border-bottom: 1px solid var(--grid); padding: 5px 10px; text-align: left;
           vertical-align: top; }}
@@ -474,7 +475,7 @@ td {{ white-space: normal; overflow-wrap: anywhere; }}
 /* ★接頭辞を付ける。★ ページ外枠の .wrap（padding 80px）と名前がぶつかると
    セルにその余白が当たり、行が 4 倍の高さに膨らむ。 */
 td.t-num {{ white-space: nowrap; }}
-td.t-wrap {{ max-width: 52ch; }}
+td.t-wrap {{ max-width: 52ch; min-width: 14ch; }}
 thead th {{ border-bottom: 2px solid var(--axis); color: var(--ink2);
             font-weight: 600; position: sticky; top: 0; background: var(--surface); }}
 tbody tr:hover {{ background: var(--plane); }}

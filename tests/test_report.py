@@ -183,3 +183,15 @@ def test_sections_can_be_built_by_hand():
     s.text("本文").pre("そのまま出す\n2 行目").text("注記", kind="note")
     html = rep.to_html()
     assert "手書き" in html and "<pre>" in html and 'class="note"' in html
+
+
+def test_wide_tables_do_not_overflow_the_page():
+    """★横に溢れた表は、右端が横スクロールに隠れる。★
+
+    schema の表は 8 列あり、いちばん右が「判断の根拠」である。
+    溢れたまま出すと、**この package でいちばん読ませたい列が消える**
+    （画面では横スクロールで見えるが、紙に刷ると本当に消える）。
+    """
+    html = build_report(frame()).to_html()
+    assert "max-width: 100%" in html            # 表の幅を枠に収める
+    assert "td.t-wrap { max-width: 52ch; min-width: 14ch; }" in html

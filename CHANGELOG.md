@@ -5,6 +5,33 @@
 
 ## [Unreleased]
 
+### 追加（Phase 11）— 層1の結線と保存先
+- `autoprep()` / `quicklook()` — **1 行で読み込みから前処理済み行列とレポートまで。**
+  - **層2を順に呼ぶだけの薄い層。層1に固有のロジックは 1 行も無い。**
+    受講者が層1で見た結果を、層2で 1 段ずつ分解して追体験できる。
+  - 背骨（読む・役割の推定・監査・分割・前処理）で失敗したら**止まる**。
+    付随するもの（管理目標・生存時間・図）は**理由を残して飛ばす**。
+    `rep.steps` に全段の成否が残る。
+  - `rep.warnings` に人の確認が要る事項が集まる。**空で返るほうを疑うこと。**
+  - `rep.X_train` / `rep.pipeline` / `rep.schema` / `rep.html` などから結果を取り出す。
+- `paths` — **既存教材の `run{N}` 規約をそのまま使う。**
+  - `~/lab_output/{手法名}/run{N}/{table,figure,model,report}/`、
+    Colab は `{COLAB_BASE}/lab_output/...`、ログは `~/lab_work/log`。
+  - `determine_runnumber()` / `create_directory()` は**既存ノートブックからの写し**。
+    引数を変えないことをテストで固定した（D&Dアプリ互換）。
+  - **採番に `report` を数えない**（既存ノートブックは table/model/figure だけを見る）。
+  - `history.csv` は「既存の列 ＋ 未知の列」で作り直す。
+    **ノートブック実行の「最良R2」を消さない。**
+  - 結果フォルダの根に `.gitignore`（全無視）を必ず置く。
+- `loading.read_any()` — csv / xlsx / parquet / json / sav / dta。
+  - 文字コード（cp932 など）と見出し行を推測し、**推測を必ず記録に残す**。
+  - 空の列・行を落とし、同名の列を警告する。
+- `viz.FigureSet.save_all()` — 図を一括保存（Windows で使えない文字を避ける）。
+
+### 修正（Phase 11）
+- `report` — 列数の多い表（schema の 8 列）が枠から溢れ、
+  **いちばん右の「判断の根拠」が横スクロールに隠れていた。** `max-width: 100%` で収めた。
+
 ### 追加（Phase 10）— 図と HTML レポート
 - `viz` — **1 つの検証済み色体系で図を描く。**
   - 色は仕事で決める。**相関（符号あり）は発散配色で中点は灰色、
