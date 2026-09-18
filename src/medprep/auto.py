@@ -32,6 +32,7 @@ import pandas as pd
 from . import paths as _paths
 from . import viz
 from .clean import clean_numeric, derive, load_dict
+from .dates import parse_date_series
 from .describe import table_one, target_achievement
 from .loading import read_any
 from .missing import analyze as analyze_missing
@@ -59,6 +60,7 @@ class PrepResult:
     schema_raw: Schema | None = None
     audit: object = None
     clean_report: object = None
+    dates: dict = field(default_factory=dict)      # 列名 -> DateParseResult
     missing: object = None
     mcar: pd.DataFrame | None = None
     outliers: object = None
@@ -265,6 +267,12 @@ def autoprep(
         res.df_clean = df.copy()
         step("辞書で掃除する", False, "clean=False が指定された")
     dfc = res.df_clean
+
+    # -------------------------------------------------------- 4.5) 日付を解釈する
+    #   ★掃除は数値列にしか掛からない。日付は別に直さなければ生の文字列のまま残る。★
+    #   和暦・全角・Excel シリアル値・時刻付きが 1 列に混ざっていても、
+    #   ここで datetime に揃える。**並びが決まらない列には手を触れない。**
+    res.dates = _parse_dates(dfc, res.schema_raw, date_col, survival_dates, step, warn)
 
     # -------------------------------------------------------- 5) 役割の再推定
     #   掃除で派生列（補正Ca など）が増えるので、以降はこちらの schema を使う。
@@ -507,11 +515,15 @@ def _save_all(res: PrepResult, *, method, project_folder, out_dir, source, step,
 def _save_data(res: PrepResult, p, put) -> None:
     """掃除済みデータと前処理済み行列を書き出す。
 
-    **2 つは別ものである。**
-      掃除済み  … 辞書で掃除し派生列を足した、**人が読める**データ
+    **3 つは別ものである。**
+      掃除済み  … 値を掃除し日付を解釈した、**全列**のデータ（人が自分の記録と突き合わせる）
+      解析用    … そこから**落とすと決めた列を除いた**もの（ID・重複列・自由記載が消える）
       前処理済み … スケール・符号化まで済ませた、**モデルに渡す**行列
 
-    ★どちらも症例レベルのデータである。★ `run` の根には `.gitignore` を必ず置いているが、
+    掃除済みから ID を抜かないのは、**人が症例を辿れなくなるから**である。
+    「どの列を落としたか」は同じブックの 2 枚目・3 枚目に入れる。
+
+    ★どれも症例レベルのデータである。★ `run` の根には `.gitignore` を必ず置いているが、
     人に渡すときは中身を確かめること。
     """
     import os
@@ -519,8 +531,19 @@ def _save_data(res: PrepResult, p, put) -> None:
     os.makedirs(d, exist_ok=True)
 
     if res.df_clean is not None:
-        put(os.path.join(d, "掃除済みデータ.xlsx"),
-            lambda q: res.df_clean.to_excel(q, index=False))
+        def _clean_book(q):
+            with pd.ExcelWriter(q, engine="openpyxl") as w:
+                res.df_clean.to_excel(w, sheet_name="データ", index=False)
+                if res.schema is not None:
+                    res.schema.to_frame().to_excel(w, sheet_name="列の扱い", index=False)
+                if res.removed is not None and len(res.removed):
+                    res.removed.to_excel(w, sheet_name="減らしたもの", index=False)
+        put(os.path.join(d, "掃除済みデータ.xlsx"), _clean_book)
+
+        if res.schema is not None:
+            keep = [c for c in res.schema.kept() if c in res.df_clean.columns]
+            put(os.path.join(d, "解析用データ.xlsx"),
+                lambda q: res.df_clean[keep].to_excel(q, index=False))
 
     if res.prepared is None:
         return
@@ -533,6 +556,55 @@ def _save_data(res: PrepResult, p, put) -> None:
         lambda q: _with_y(res.X_train, res.y_train).to_excel(q, index=False))
     put(os.path.join(d, "前処理済み_test.xlsx"),
         lambda q: _with_y(res.X_test, res.y_test).to_excel(q, index=False))
+
+
+def _parse_dates(dfc, schema_raw, date_col, survival_dates, step, warn) -> dict:
+    """日付らしい列を datetime に揃える。**その場で dfc を書き換える。**
+
+    ★「解釈できたから直す」であって「推測して直す」ではない。★
+    日と月の順序が決まらない列（どちらも 12 以下しかない）は `parse_date_series` が
+    警告を残すので、それをそのまま人に上げて、値には手を触れない。
+    """
+    cols = []
+    if schema_raw is not None:
+        cols += [c for c in schema_raw.by_role(DATETIME) if c in dfc.columns]
+    for c in [date_col, *(survival_dates or ())]:
+        if c and c in dfc.columns and c not in cols:
+            cols.append(c)
+    if not cols:
+        return {}
+
+    out, done, touched = {}, 0, []
+    for c in cols:
+        try:
+            r = parse_date_series(dfc[c], name=c)
+        except Exception as e:                                       # noqa: BLE001
+            step("日付を解釈する", False, f"'{c}' は飛ばした（{type(e).__name__}: {e}）")
+            continue
+        out[c] = r
+        # ★合図は order。注記の文面で判定してはならない（文面は変わりうる）。★
+        if str(r.order).startswith("ambiguous"):
+            # ★並びが決まらない列は書き換えない。★ 勝手に ymd と決めて直すと、
+            #   3/4 が 3月4日なのか 4月3日なのか分からないまま観察期間が計算される。
+            warn(f"日付 '{c}' は日と月の順序が決まらない。値はそのままにした。"
+                 + (r.notes[0] if r.notes else ""))
+            continue
+        if r.success_rate < 0.5:
+            warn(f"日付 '{c}' は {r.success_rate:.0%} しか解釈できなかった。"
+                 f"日付の列でない可能性がある。値はそのままにした")
+            continue
+        dfc[c] = r.values
+        done += 1
+        touched.append(c)
+        if r.n_failed:
+            warn(f"日付 '{c}' の {r.n_failed} 例を解釈できず空欄にした"
+                 f"（例: {[v for _i, v in r.failures[:3]]}）")
+
+    if done:
+        orders = {out[c].order for c in touched}
+        step("日付を解釈する", True,
+             f"{done} 列を datetime に揃えた（並び: {'、'.join(sorted(orders))}）")
+    return out
 
 
 def _removed_table(res: PrepResult, dfc, outcome) -> pd.DataFrame:

@@ -197,7 +197,7 @@ code("""
 # ★このノートブックが必要とする medprep の版★
 #   古い medprep が入っていると、あとのセルが AttributeError で止まる。
 #   ここで版を確かめて、足りなければ**理由を言って止める**。
-REQUIRED_MEDPREP = (0, 3, 0)
+REQUIRED_MEDPREP = (0, 4, 0)
 
 if IN_COLAB:
     # -U（更新）と --no-cache-dir を付ける。付けないと、同じ版番号のまま
@@ -421,15 +421,41 @@ md("""
 
 | 場所 | 中身 |
 |---|---|
-| `data/掃除済みデータ.xlsx` | 辞書で掃除し派生列を足した、**人が読める**データ |
+| `data/掃除済みデータ.xlsx` | 値を掃除し**日付を解釈した**、全列のデータ<br>2 枚目「列の扱い」・3 枚目「減らしたもの」付き |
+| `data/解析用データ.xlsx` | そこから**落とすと決めた列を除いた**もの（ID・重複列・自由記載が消える） |
 | `data/前処理済み_train.xlsx` / `_test.xlsx` | スケール・符号化まで済んだ、**モデルに渡す**行列<br>（**目的変数を指定したときだけ**。ここではまだ出ない → 演習⑥で出る） |
 | `table/除外の記録.xlsx` | 上の「減らしたもの」の一覧 |
 | `model/schema.yaml` | ★再現性の中核★ 列の役割と、そう判断した理由 |
 | `model/pipeline.pkl` | fit 済みの前処理（新しい症例に同じ変換を当てられる） |
 | `report/prep_report.html` | すべてをまとめた HTML 1 枚 |
 
+**掃除済みから ID を抜かないのは、人が症例を辿れなくなるからである。**
+「どの列を落としたか」は同じブックの 2 枚目・3 枚目に入っている。
+
 **`data/` は症例レベルのデータである。** 置き場所の根には毎回 `.gitignore` を入れているが、
 人に渡すときは中身を確かめること。要らなければ `save_data=False` を渡す。
+""")
+
+md("""
+## 日付は「解釈できたから直す」
+
+掃除（`clean_numeric`）は**数値列にしか掛からない**。日付を別に直さなければ、
+和暦 `H24.7.2`・全角 `２０１５／６／７`・Excel シリアル値 `41098`・時刻付き
+`2015-9-15 09:40:38` が**生の文字列のまま残る**。
+
+`autoprep` は日付の列を `datetime` に揃え、**何をどう読んだかを残す**。
+
+★ただし、日と月の順序が決まらない列（`3/4/15` のように年が末尾で日・月とも 12 以下）は
+**書き換えない。** 3月4日なのか 4月3日なのか分からないまま観察期間を計算すると、
+最大 11 か月ずれる。そこは人に返す。
+""")
+
+code("""
+for col, r in rep.dates.items():
+    print(f'{col:<16s} 並び={r.order:<6s} 解釈 {r.n_parsed}/{r.n_total - r.n_null}'
+          f'  空欄 {r.n_null}  失敗 {r.n_failed}')
+print()
+print(rep.df_clean[list(rep.dates)].dtypes.to_string())
 """)
 
 code("""
@@ -892,7 +918,7 @@ nb = {
     "nbformat": 4,
     "nbformat_minor": 0,
 }
-VERSION = "Ver1_2"
+VERSION = "Ver1_3"
 out = str(pathlib.Path(__file__).resolve().parent / f"Preprocessing_{VERSION}.ipynb")
 with open(out, "w", encoding="utf-8") as f:
     json.dump(nb, f, ensure_ascii=False, indent=1)

@@ -312,3 +312,91 @@ def test_save_data_can_be_turned_off(isolated):
     """★症例レベルのデータである。要らないなら書かない。★"""
     rep = run(outcome="転帰", task="classification", save=True, save_data=False)
     assert not os.path.exists(os.path.join(rep.run.run, "data"))
+
+
+# ---------------------------------------------------------------- 日付
+def messy_dates(n=80):
+    """和暦・全角・Excel シリアル値・時刻付きが 1 列に混ざったデータ。"""
+    base = pd.Timestamp("2015-01-01")
+    days = rng.integers(0, 2000, n)
+    ts = [base + pd.Timedelta(days=int(d)) for d in days]
+    styles = ["ymd", "wareki", "zenkaku", "serial", "time"] * (n // 5 + 1)
+    out = []
+    for t, st in zip(ts, styles[:n]):
+        if st == "ymd":
+            out.append(f"{t.year}/{t.month}/{t.day}")
+        elif st == "wareki":
+            out.append(f"H{t.year - 1988}.{t.month}.{t.day}" if t.year < 2019
+                       else f"R{t.year - 2018}.{t.month}.{t.day}")
+        elif st == "zenkaku":
+            out.append(f"{t.year}/{t.month}/{t.day}".translate(
+                str.maketrans("0123456789/", "０１２３４５６７８９／")))
+        elif st == "serial":
+            out.append(int((t - pd.Timestamp("1899-12-30")).days))
+        else:
+            out.append(f"{t.year}-{t.month}-{t.day} 09:40:38")
+    df = frame(n)
+    df["検査日"] = out
+    return df
+
+
+def test_messy_dates_are_parsed_into_real_dates():
+    """★掃除は数値列にしか掛からない。日付を直さなければ生の文字列のまま残る。★"""
+    rep = run(messy_dates(), date_col="検査日")
+    col = rep.df_clean["検査日"]
+    assert pd.api.types.is_datetime64_any_dtype(col)
+    assert col.notna().all()
+    assert rep.dates["検査日"].order == "ymd"
+
+
+def test_the_parsing_is_reported_as_a_step():
+    rep = run(messy_dates(), date_col="検査日")
+    assert any(n == "日付を解釈する" and ok for n, ok, _d in rep.steps)
+
+
+def test_an_ambiguous_date_column_is_left_alone():
+    """★日と月の順序が決まらない列に手を触れない。★
+
+    3/4 が 3月4日なのか 4月3日なのか分からないまま観察期間を計算してはならない。
+    """
+    df = frame(60)
+    df["検査日"] = ["3/4/15", "5/6/15", "7/8/15", "2/1/15"] * 15
+    rep = run(df, date_col="検査日")
+    assert rep.df_clean["検査日"].dtype == object          # 書き換えていない
+    assert any("順序が決まらない" in w for w in rep.warnings)
+
+
+def test_a_column_that_is_not_a_date_is_left_alone():
+    df = frame(60)
+    df["メモ"] = ["特記なし"] * 60
+    rep = run(df, date_col="メモ")
+    assert rep.df_clean["メモ"].dtype == object
+
+
+def test_parsed_dates_reach_the_saved_file(isolated):
+    rep = run(messy_dates(), date_col="検査日", save=True)
+    book = pd.read_excel(os.path.join(rep.run.run, "data", "掃除済みデータ.xlsx"),
+                         sheet_name="データ")
+    assert pd.api.types.is_datetime64_any_dtype(book["検査日"])
+
+
+# ---------------------------------------------------------------- 保存の形
+def test_the_cleaned_workbook_says_which_columns_were_dropped(isolated):
+    """★落とすと決めた列が、保存したファイルから分かること。★"""
+    rep = run(save=True)
+    book = pd.read_excel(os.path.join(rep.run.run, "data", "掃除済みデータ.xlsx"),
+                         sheet_name=None)
+    assert set(book) == {"データ", "列の扱い", "減らしたもの"}
+    treat = book["列の扱い"]
+    assert "仮名ID" in set(treat["列名"])
+    assert treat.loc[treat["列名"] == "仮名ID", "扱い"].iloc[0] == "drop"
+
+
+def test_the_analysis_file_has_the_dropped_columns_removed(isolated):
+    rep = run(save=True)
+    d = os.path.join(rep.run.run, "data")
+    full = pd.read_excel(os.path.join(d, "掃除済みデータ.xlsx"), sheet_name="データ")
+    use = pd.read_excel(os.path.join(d, "解析用データ.xlsx"))
+    assert "仮名ID" in full.columns          # 人が症例を辿れるように残す
+    assert "仮名ID" not in use.columns       # 解析には使わない
+    assert len(use) == len(full)             # 行は減らさない
