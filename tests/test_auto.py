@@ -219,3 +219,23 @@ def test_to_excel_writes_one_sheet_per_table(tmp_path):
     rep = run()
     p = rep.to_excel(tmp_path / "t.xlsx")
     assert len(pd.read_excel(p, sheet_name=None)) >= 1
+
+
+def test_the_survival_frame_carries_the_covariates():
+    """★共変量の無い SurvivalFrame は Cox に掛けられない。★
+
+    ID と (duration, event) だけを返すと、受け取った側が元データと
+    結合し直すはめになり、そこで症例を取り違える。
+    """
+    df = frame()
+    base = pd.Timestamp("2015-01-01")
+    df["開始日"] = base + pd.to_timedelta(rng.integers(0, 500, len(df)), "D")
+    df["発生日"] = df["開始日"] + pd.to_timedelta(rng.integers(30, 900, len(df)), "D")
+    df["打切日"] = ""
+    df.loc[df.index[::2], ["発生日"]] = ""
+    df.loc[df.index[::2], "打切日"] = (
+        df.loc[df.index[::2], "開始日"] + pd.Timedelta(days=700))
+    rep = run(df, survival_dates=("開始日", "発生日", "打切日"))
+    cols = set(rep.survival.data.columns)
+    assert {"duration", "event"} <= cols
+    assert {"年齢", "施設"} <= cols

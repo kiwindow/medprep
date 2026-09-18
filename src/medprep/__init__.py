@@ -88,6 +88,7 @@ from . import (
     auto,
     clean,
     dates,
+    demo,
     describe,
     hd,
     loading,
@@ -183,7 +184,8 @@ __all__ = [
     # 読み込みと保存先
     "read_any", "new_run", "RunPaths", "RunLog",
     # モジュール
-    "auto", "clean", "dates", "describe", "hd", "loading", "missing", "outliers",
+    "auto", "clean", "dates", "demo", "describe", "hd", "loading", "missing",
+    "outliers",
     "paths", "pipeline", "quality", "report", "schema", "splitting", "survival",
     "survival_input", "tac", "targets", "timing", "viz",
     # 列の役割とデータ品質監査

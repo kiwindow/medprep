@@ -5,6 +5,30 @@
 
 ## [Unreleased]
 
+### 追加（Phase 12）— 第3回の教材
+- `examples/notebook/Preprocessing_Ver1_0.ipynb` — **第3回演習ノートブック**（63 セル）。
+  - 既存教材の作法に準拠（Colab マウント → 環境変数の一括設定 → ライブラリ導入 → データ入力）。
+  - 演習①〜⑥：全自動 → schema の検分 → 欠損と外れ値 → Table 1 → 生存時間 → モデルに渡す。
+  - **`nbclient` で実際に通して 0 エラーを確認してある。**
+- `examples/slides/第3回_データの前処理_ver1_0.pptx` — **講義スライド 20 枚**。
+  - 既存教材（`HowToSetUpPC.pptx`）の配色・座標に合わせた。すべて Bold。
+  - `build_slides.py` / `deck.py` で組み立てる。**高さは本文の量から計算**し、
+    各要素が次を置く位置を返す。文言を直しても崩れない。
+- `medprep.demo` — **演習用の合成透析コホート**をパッケージに入れた。
+  - `dialysis_cohort()` / `save()` / `TRUE_COEFFICIENTS`（Cox の真の係数）。
+  - 仕込んだ汚れ 11 種をテストで固定した（消えていれば演習が成立しない）。
+  - Colab では `pip install` した medprep からそのまま呼べる。
+
+### 修正（Phase 12）
+- `autoprep` — **`survival_dates` から作った `SurvivalFrame` が共変量を持っていなかった。**
+  ID と (duration, event) だけでは Cox に掛けられず、利用者が元データと結合し直すことになる。
+  日付列を除く特徴量を必ず持たせる。
+- `autoprep` — **`columns`（モデルに入れる特徴量）を Table 1 にも渡していた。**
+  日付や自由記載まで表に並び、Table 1 が 2,221 行になっていた。`table1_columns` を分けた。
+- `describe.table_one` — **水準の多い列を 1 行ずつ展開していた。**
+  自由記載の列が混ざると表が数百行になり、χ² も意味を持たない。
+  `max_levels`（既定 20）を超えたら 1 行にまとめ、注記に理由を残す。
+
 ### 追加（Phase 11）— 層1の結線と保存先
 - `autoprep()` / `quicklook()` — **1 行で読み込みから前処理済み行列とレポートまで。**
   - **層2を順に呼ぶだけの薄い層。層1に固有のロジックは 1 行も無い。**

@@ -465,10 +465,38 @@ uv run python examples/run_e2e.py          # schema → audit → 掃除 → 生
 
 ---
 
+## 第3回の教材
+
+演習講座「鹿鳴館」第1期・第3回「データの前処理」で使う教材が `examples/` にあります。
+
+| ファイル | 中身 |
+|---|---|
+| `examples/notebook/Preprocessing_Ver1_0.ipynb` | 演習ノートブック（演習①〜⑥） |
+| `examples/slides/第3回_データの前処理_ver1_0.pptx` | 講義スライド 20 枚 |
+| `examples/slides/build_slides.py` | スライドを組み立て直すスクリプト |
+| `examples/run_e2e.py` | 通し検証（全 16 段） |
+
+自分のデータが無い受講者のために、**汚れを意図的に仕込んだ合成透析コホート**
+（600 例・実データは一切含みません）を同梱しています。
+
+```python
+import medprep as mp
+
+df = mp.demo.dialysis_cohort()      # 600 例
+mp.demo.TRUE_COEFFICIENTS           # Cox の真の係数（推定値と照合できます）
+```
+
+仕込んである汚れ: 欠損コード（999／「未測定」）、検出限界（`<0.1`）、単位混在（Hb の g/L）、
+生理学的にあり得ない値（Hb 0、年齢 250）、日付 8 表記の混在（和暦・全角・Excel シリアル値）、
+矛盾した打切り、**2020 年 4 月の ALP 測定法変更による段差**、完全相関する重複列、
+ID 的な自由記載列。
+
+---
+
 ## 状態
 
-20 モジュールが動き、層1（`autoprep()`）まで通っています。
-残りは第3回の演習ノートブックとスライド、および時系列（第4回以降）です。
+21 モジュールが動き、層1（`autoprep()`）と第3回の教材まで揃っています。
+残りは時系列（第4回以降）です。
 
 進捗は [CHANGELOG.md](CHANGELOG.md) を参照してください。
 

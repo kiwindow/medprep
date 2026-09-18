@@ -396,3 +396,28 @@ def test_compare_groups_uses_the_schema_kinds():
     kinds = {c.name.split(" ")[0]: c.kind for c in r.comparisons}
     assert kinds["性別"] == CATEGORICAL
     assert any(k.startswith("年齢") and v == CONTINUOUS for k, v in kinds.items())
+
+
+def test_a_free_text_column_does_not_explode_table_one():
+    """★水準ごとに 1 行ずつ出すと、自由記載の列で表が数百行になる。★
+
+    そうなると Table 1 は読めず、χ² も意味を持たない。1 行にまとめて、
+    何が起きたかを注記に残す。
+    """
+    n = 120
+    df = pd.DataFrame({
+        "群": ["A"] * 60 + ["B"] * 60,
+        "備考": [f"自由記載_{i}" for i in range(n)],
+        "年齢": np.linspace(50, 85, n),
+    })
+    t = table_one(df, groupby="群", columns=["備考", "年齢"])
+    assert len(t.table) < 10
+    assert any("水準" in n_ and "備考" in n_ for n_ in t.notes)
+
+
+def test_a_normal_categorical_column_still_shows_its_levels():
+    df = pd.DataFrame({"群": ["A"] * 30 + ["B"] * 30,
+                       "施設": (["X", "Y", "Z"] * 20)})
+    t = table_one(df, groupby="群", columns=["施設"])
+    items = t.table["項目"].tolist()
+    assert any("X" in str(x) for x in items)

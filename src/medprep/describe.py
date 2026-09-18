@@ -716,6 +716,7 @@ def table_one(
     dic: dict | None = None,
     correction: str = "bh",
     paired_by: str | None = None,
+    max_levels: int = 20,
 ) -> TableOneResult:
     """医学論文の Table 1 を作る。
 
@@ -744,6 +745,7 @@ def table_one(
         levels, sizes, cmap = [], {}, {}
 
     rows = []
+    notes_extra: list = []
     head = {"項目": "n"}
     if overall:
         head["全体"] = str(len(df))
@@ -779,6 +781,20 @@ def table_one(
             rows.append(row)
         else:
             cat_levels = sorted({str(x) for x in s.dropna().unique()})
+            if len(cat_levels) > max_levels:
+                # ★水準ごとに 1 行ずつ出してはならない。★
+                #   自由記載やカルテ番号のような列がカテゴリとみなされると、
+                #   Table 1 が数百行になり、検定（χ²）も意味を持たない。
+                #   1 行にまとめ、何が起きたかを言う。
+                row = {"項目": f"{label}（{len(cat_levels)} 水準。多すぎるため内訳は省いた）",
+                       **_blank(overall, levels, groupby, pval, smd, correction)}
+                row["欠測"] = int(s.isna().sum())
+                rows.append(row)
+                notes_extra.append(
+                    f"★'{col}' は {len(cat_levels)} 水準あり、Table 1 の内訳を省いた。★ "
+                    f"自由記載や識別子であれば schema で除くこと"
+                    f"（max_levels= で閾値を変えられる）")
+                continue
             rows.append({"項目": f"{label}, n (%)", **_blank(overall, levels, groupby,
                                                              pval, smd, correction)})
             # 検定の結果は変数の見出し行に載せる（水準ごとに出すと読みにくい）
@@ -805,6 +821,7 @@ def table_one(
         notes += comp.notes if comp else []
     notes.append("連続変数は正規性の判定に従って 平均(SD) と 中央値[Q1,Q3] を書き分けている。"
                  "判定の根拠は compare_groups() の『判定の根拠』列に残してある。")
+    notes += notes_extra
     return TableOneResult(table=table, groups=levels, sizes=sizes, notes=notes,
                           comparison=comp, groupby=groupby)
 

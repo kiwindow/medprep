@@ -40,7 +40,7 @@ from .outliers import detect as detect_outliers
 from .pipeline import leak_check, prepare
 from .quality import audit
 from .report import build_report
-from .schema import Schema
+from .schema import DATETIME, Schema
 from .splitting import split
 from .survival_input import build_survival
 
@@ -154,6 +154,7 @@ def autoprep(
     survival_dates: tuple | None = None,
     date_col: str | None = None,
     columns: list | None = None,
+    table1_columns: list | None = None,
     test_size: float = 0.2,
     seed: int = 0,
     clean: bool = True,
@@ -256,8 +257,15 @@ def autoprep(
     if survival_dates:
         def _sf():
             start, ev, cens = survival_dates
+            # ★共変量を必ず持たせる。★
+            #   持たせないと `.data` は ID と (duration, event) だけになり、
+            #   受け取った側が Cox に掛けられない（共変量を手で結合し直すはめになる）。
+            keep = [c for c in res.schema.features()
+                    if c in dfc.columns and c not in survival_dates
+                    and res.schema.columns[c].role != DATETIME]   # 日付は共変量ではない
             sf = build_survival(dfc, id_col=id_col, start_date=start,
-                                event_date=ev, censor_date=cens, unit="years")
+                                event_date=ev, censor_date=cens,
+                                covariates=keep, unit="years")
             step("生存時間の形にする", True,
                  f"{len(sf.data)} 例（除外 {len(sf.excluded)} 例）")
             if len(sf.excluded):
@@ -285,9 +293,13 @@ def autoprep(
 
     # -------------------------------------------------------- 9) Table 1
     if do_table1:
+        # ★`columns` を Table 1 に回してはならない。★
+        #   `columns` は「モデルに入れる特徴量」であって「表に並べる項目」ではない。
+        #   両方に渡すと、日付や自由記載まで Table 1 に並び、数百行の表になる。
         res.table1 = optional(
             "Table 1 を作る",
-            lambda: table_one(dfc, res.schema, groupby=group, columns=columns, dic=dic))
+            lambda: table_one(dfc, res.schema, groupby=group,
+                              columns=table1_columns, dic=dic))
         if res.table1 is not None:
             step("Table 1 を作る", True,
                  f"{len(res.table1.to_frame())} 行" + (f"（{group} 別）" if group else ""))
