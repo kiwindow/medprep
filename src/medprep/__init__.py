@@ -80,7 +80,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __author__ = "Kazuhiro Iwadoh"
 __license__ = "MIT"
 
@@ -151,6 +151,7 @@ from .pipeline import (
     Prepared,
     Preprocessor,
     build_preprocessor,
+    encode_binary_columns,
     leak_check,
     prepare,
 )
@@ -208,7 +209,7 @@ __all__ = [
     "detect_outliers", "OutlierReport", "NanSafeWinsorizer",
     # 分割と前処理（リーク防止）
     "split", "cv_splitter", "fold_summary", "mark_as", "SplitResult",
-    "Preprocessor", "prepare", "Prepared", "build_preprocessor", "leak_check",
+    "Preprocessor", "prepare", "Prepared", "build_preprocessor", "leak_check", "encode_binary_columns",
     "LeakageError",
     # 図とレポート
     "build_report", "Report",

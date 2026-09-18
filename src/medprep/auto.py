@@ -38,7 +38,7 @@ from .loading import read_any
 from .missing import analyze as analyze_missing
 from .missing import drop_missing_outcome, mcar_signals
 from .outliers import detect as detect_outliers
-from .pipeline import leak_check, prepare
+from .pipeline import encode_binary_columns, leak_check, prepare
 from .quality import audit
 from .report import build_report
 from .schema import DATETIME, Schema
@@ -80,6 +80,8 @@ class PrepResult:
     log: _paths.RunLog | None = None
     removed: pd.DataFrame | None = None     # 何を、いくつ、なぜ減らしたか
     outputs: pd.DataFrame | None = None     # 書き出すファイルと、そこまでに施した処置
+    encoded: pd.DataFrame | None = None     # 0/1 に直した二値の列（何を 1 にしたか）
+    df_use: pd.DataFrame | None = None      # 解析用データ（列を落とし、二値を 0/1 に）
     dropped_outcome: dict = field(default_factory=dict)
     warnings: list = field(default_factory=list)
     notes: list = field(default_factory=list)
@@ -402,6 +404,15 @@ def autoprep(
     step("減らしたものを数える", True,
          f"列 {n_col} 本 / 行 {n_row} 例（rep.removed に一覧）")
 
+    # -------------------------------------------------------- 11.6) 解析用データを作る
+    #   ★モデルに渡す行列と、自分で解析するファイルとで、
+    #     性別が 0/1 だったり 男/女 だったりするのは混乱のもとである。★
+    res.df_use, res.encoded = _build_use_frame(res, dfc)
+    if res.encoded is not None and len(res.encoded):
+        step("二値の列を 0/1 に直す", True,
+             "、".join(f"{r['元の列']}→{r['作った列']}（1={r['1 = ']}）"
+                       for _, r in res.encoded.iterrows()))
+
     # -------------------------------------------------------- 12) 図
     if do_figures:
         res.figures = viz.overview(
@@ -456,7 +467,8 @@ def _build_html(res: PrepResult, *, title=None, show_values=False, source="", **
         res.schema,
         title=title or "前処理レポート",
         subtitle=sub,
-        audit=res.audit, removed=res.removed, outputs=res.outputs, run=res.run,
+        audit=res.audit, removed=res.removed, outputs=res.outputs,
+        encoded=res.encoded, run=res.run,
         missing=res.missing,
         outliers=res.outliers,
         table1=res.table1,
@@ -593,14 +605,13 @@ def _save_data(res: PrepResult, p, put) -> None:
                     res.removed.to_excel(w, sheet_name="減らしたもの", index=False)
         put(os.path.join(d, "掃除済みデータ.xlsx"), _clean_book)
 
-        if res.schema is not None:
-            # ★印の 2 列は必ず残す。★ 行を削除していないので、
-            #   どの行を外すのが望ましいかはこの列でしか分からない。
-            keep = [c for c in res.schema.kept() if c in res.df_clean.columns]
-            keep += [c for c in (EXCLUDE_FLAG, EXCLUDE_REASON)
-                     if c in res.df_clean.columns and c not in keep]
-            put(os.path.join(d, "解析用データ.xlsx"),
-                lambda q: _excel(res.df_clean[keep], q))
+        if res.df_use is not None:
+            def _use_book(q):
+                with pd.ExcelWriter(q, engine="openpyxl") as w:
+                    _date_only(res.df_use).to_excel(w, sheet_name="データ", index=False)
+                    if res.encoded is not None and len(res.encoded):
+                        res.encoded.to_excel(w, sheet_name="0と1の対応", index=False)
+            put(os.path.join(d, "解析用データ.xlsx"), _use_book)
 
     if res.prepared is None:
         return
@@ -675,6 +686,24 @@ def _parse_dates(dfc, schema_raw, date_col, survival_dates, step, warn) -> dict:
     return out
 
 
+def _build_use_frame(res: PrepResult, dfc):
+    """**解析用データ**を作る ―― 落とす列を除き、二値の列を 0/1 に直す。
+
+    「モデルに渡す行列では `男性` が 0/1 なのに、自分で解析するファイルでは
+    `性別` が 男/女 のまま」という食い違いを無くす。同じ変換を同じ規則で掛ける。
+
+    掃除済みデータのほうは**手を触れない**。あれは <u>人が元の記録と突き合わせる</u>
+    ためのものなので、`男/女` のまま残っていないと照合できない。
+    """
+    if dfc is None or res.schema is None:
+        return None, None
+    keep = [c for c in res.schema.kept() if c in dfc.columns]
+    keep += [c for c in (EXCLUDE_FLAG, EXCLUDE_REASON)
+             if c in dfc.columns and c not in keep]
+    use, table = encode_binary_columns(dfc[keep], res.schema)
+    return use, table
+
+
 def _outputs_table(res: PrepResult, *, save: bool, save_data: bool) -> pd.DataFrame:
     """**どのファイルに何が入っていて、そこまでに何をしたか。**
 
@@ -685,7 +714,8 @@ def _outputs_table(res: PrepResult, *, save: bool, save_data: bool) -> pd.DataFr
                    "② 検出限界（<0.1）を数値化　③ 単位の混在を換算　"
                    "④ 生理学的にあり得ない値を NaN に　⑤ 派生指標を追加（補正Ca 等）　"
                    "⑥ 日付を解釈（和暦・全角・シリアル値）　⑦ 外すのが望ましい行に印")
-    use_steps = clean_steps + "　⑧ **解析に使わない列を削除**（ID・重複列・自由記載）"
+    use_steps = (clean_steps + "　⑧ **解析に使わない列を削除**（ID・重複列・自由記載）"
+                 "　⑧b **二値の列を 0/1 に**（性別 → **男性**：1=男性・0=女性）")
     prep_steps = (use_steps + "　⑨ **目的変数が欠測の症例を除く**　⑩ train/test に分割　"
                   "⑪ 欠損を補完・⑫ スケーリング・"
                   "⑬ カテゴリをダミー化（二値は 0/1 の 1 本にまとめ、"

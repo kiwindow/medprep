@@ -141,6 +141,7 @@ def build_report(
     audit=None,
     removed=None,
     outputs=None,
+    encoded=None,
     run=None,
     missing=None,
     outliers=None,
@@ -205,6 +206,20 @@ def build_report(
                "元のデータと症例ごとに axis=1 で結合し直せなくなる。"
                "外すかどうかは <code>除外推奨</code> 列を見て人が決めること。", kind="html")
         s.table(removed, caption="減らしたものの一覧", max_rows=300)
+
+    # --- 二値の列
+    if encoded is not None and len(encoded):
+        s = rep.section("1d. 二値の列を 0/1 に直した ―― 1 がどちらかを列名で示す")
+        s.text("性別のように水準が 2 つの列は <b>0/1 の 1 本</b>にまとめる。"
+               "問題は「列が何本になるか」ではなく <b>どちらの水準が 1 になるか</b>で、"
+               "それを機械の都合（辞書順）で決めると、"
+               "<code>男/女</code> で記録した施設は <code>性別=男</code>、"
+               "<code>M/F</code> の施設は <code>性別=M</code> と"
+               "<b>同じ意味の列が別名になる。</b>だから <u>意味で</u>決める。", kind="html")
+        s.table(encoded, caption="0/1 に直した列（解析用データと前処理済みの両方に効く）")
+        s.text("<b>掃除済みデータには掛けていない。</b>あれは"
+               "<u>人が元の記録と突き合わせる</u>ためのものなので、"
+               "<code>男/女</code> のまま残してある。", kind="html")
 
     # --- 書き出したデータ（★3 つの違いを最初に言う★）
     if outputs is not None and len(outputs):

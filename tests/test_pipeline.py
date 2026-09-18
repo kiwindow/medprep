@@ -383,3 +383,46 @@ def test_unknown_level_does_not_crash_and_is_imputed():
     xte = prep.transform(mark_as(df.iloc[120:].assign(性別="不明"), "test"))
     assert xte["男性"].notna().all()
     assert set(xte["男性"].unique()) <= {0, 1}
+
+
+# ---------------------------------- 素の DataFrame にも同じ変換を掛ける（解析用データ）
+def test_encode_binary_columns_matches_the_design_matrix():
+    """**モデルに渡す行列と、自分で解析するファイルで、性別の表し方が食い違わない。**"""
+    from medprep.pipeline import encode_binary_columns
+
+    df = _bin_frame(["M", "F"], n=120)
+    sch = _bin_schema(df)
+    out, table = encode_binary_columns(df, sch)
+
+    assert "男性" in out.columns and "性別" not in out.columns
+    assert list(out.columns).index("男性") == list(df.columns).index("性別")  # 位置は同じ
+    assert (out["男性"][df["性別"] == "M"] == 1).all()
+    assert (out["男性"][df["性別"] == "F"] == 0).all()
+    assert len(out) == len(df)                       # ★行は減らない★
+    assert list(table["元の列"]) == ["性別"]
+    assert list(table["作った列"]) == ["男性"]
+
+
+def test_encode_binary_columns_leaves_unknown_values_missing():
+    """対応表に無い値は**勝手に 0 にしない**。欠損にして、件数を報告する。"""
+    from medprep.pipeline import encode_binary_columns
+
+    df = _bin_frame(["男", "女"], n=100)
+    sch = _bin_schema(df)                 # ★schema は男/女だけ見て決まっている★
+    later = df.copy()
+    later.loc[later.index[:5], "性別"] = "不明"   # あとから表記ゆれが混ざる
+    out, table = encode_binary_columns(later, sch)
+    assert out["男性"].isna().sum() == 5
+    assert int(table.loc[0, "対応表に無く欠損にした"]) == 5
+
+
+def test_encode_binary_columns_skips_columns_that_are_already_0_1():
+    """すでに 0/1 で名前も変わらない列は、触らないし表にも出さない。"""
+    from medprep.pipeline import encode_binary_columns
+
+    df = _bin_frame(["男", "女"], n=80)
+    df["糖尿病"] = (rng.random(len(df)) < 0.4).astype(int)
+    sch = _bin_schema(df)
+    out, table = encode_binary_columns(df, sch)
+    assert "糖尿病" not in set(table["元の列"])
+    assert out["糖尿病"].equals(df["糖尿病"])

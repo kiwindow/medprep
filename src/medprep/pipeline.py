@@ -157,6 +157,47 @@ class BinaryMapper(BaseEstimator, TransformerMixin):
         return np.asarray([self._name(c) for c in names], dtype=object)
 
 
+# ============================================== 素の DataFrame に同じ変換を掛ける
+def encode_binary_columns(df: pd.DataFrame, schema: Schema) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """二値の列を **0/1 に直した DataFrame** と、**何をどう直したかの表**を返す。
+
+    `Preprocessor` の中でやっているのと**同じ変換**を、素の DataFrame にも掛ける。
+    「モデルに渡す行列では 0/1 なのに、自分で解析するファイルでは 男/女 のまま」
+    という食い違いを無くすためである。
+
+    - 列名は `binary_output_name()` で決める（性別 → **男性**、あり/なし → 元の列名）
+    - 元の列は**同じ位置で**置き換える（列の並びは変わらない）
+    - 対応表に無い値は欠損にする（**勝手に 0 にしない**）
+    """
+    out = df.copy()
+    rows = []
+    for col, sp in schema.columns.items():
+        if col not in out.columns or sp.role != BINARY or not sp.value_map:
+            continue
+        name = binary_output_name(col, sp.value_map)
+        if name == col and pd.api.types.is_numeric_dtype(out[col]) \
+                and set(pd.unique(out[col].dropna())) <= {0, 1}:
+            continue                         # すでに 0/1 で、名前も変わらない
+        m = {_norm(k): v for k, v in sp.value_map.items()}
+        if name != col and name in out.columns:
+            name = col                       # 名前がぶつかるときは元の名前のまま
+        src = out[col]
+        vals = pd.to_numeric(
+            pd.Series([np.nan if pd.isna(v) else m.get(_norm(v), np.nan) for v in src],
+                      index=src.index), errors="coerce")
+        pos = out.columns.get_loc(col)
+        out = out.drop(columns=[col])
+        out.insert(pos, name, vals)
+        pos1 = next((k for k, v in sp.value_map.items() if v == 1), "")
+        pos0 = next((k for k, v in sp.value_map.items() if v == 0), "")
+        rows.append({"元の列": col, "元の値": f"{pos1} / {pos0}", "作った列": name,
+                     "1 = ": str(pos1), "0 = ": str(pos0),
+                     "対応表に無く欠損にした": int(vals.isna().sum() - src.isna().sum())})
+    table = pd.DataFrame(rows, columns=["元の列", "元の値", "作った列", "1 = ", "0 = ",
+                                        "対応表に無く欠損にした"])
+    return out, table
+
+
 # ================================================================== 設計行列
 def _ohe_name(feature, category):
     """one-hot の列名。sklearn の 'infrequent_sklearn' は日本語に直す。"""
