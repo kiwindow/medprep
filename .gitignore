@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# uv
+uv.lock
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ★患者データは絶対に記録しない★
+*.csv
+*.xlsx
+*.xls
+*.sav
+*.dta
+data/
+!examples/**/*.md
+
+# 実行結果
+lab_output/
+lab_work/
+run*/
+*.html
+!docs/**/*.html

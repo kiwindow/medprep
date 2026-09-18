@@ -1,0 +1,1062 @@
+# medprep 医学検査項目辞書 — 初版ドラフト v1.0
+# 出典元: 岩藤先生提供「検査項目一覧_ver4.txt」（70 項目）
+#
+# 各項目の意味
+#   aliases    : 列名の表記ゆれ。medprep はこれで列を自動同定する（NFKC 正規化後に照合）
+#                ★別名は全項目を通じて一意であること★ 衝突すると先に定義された項目が
+#                その列を取り、別項目の許容範囲で検査されて黙って NaN 化されうる。
+#                CI の tests/test_dict.py が毎回この衝突を検査する。
+#   unit       : 想定単位。これ以外の単位が推定された場合は unit_variants で換算する
+#   plausible  : 【生理学的にあり得ない範囲の外側】。ここを外れた値は「外れ値」ではなく
+#                *入力ミス* とみなして NaN 化する。winsorize してはならない。
+#                生存と両立しうる極端値まで含めた広い範囲を設定してある（除きすぎない方針）
+#   reference  : 成人の基準範囲（参考表示用）。JCCLS 共用基準範囲を代表値として記載。
+#                ★施設・測定法で異なるため、板橋中央総合病院の自院基準での確認が必要★
+#   target     : 成人維持血液透析患者での管理目標。**開区間／閉区間を区別する**
+#                （low_inclusive / high_inclusive）。「5.5 未満」は high=5.5,
+#                high_inclusive=false であり、5.5 は目標範囲に含まれない。
+#                source にガイドラインの版と Statement 番号を必ず書く。
+#   timing_required: true の項目は採血時点（透析前/透析後）が必須（medprep.timing）
+#   sex_specific: true の項目は reference が男女で異なる（male/female を併記）
+#   note       : 前処理上の注意
+#
+# ▲ この辞書は「あり得ない値の検出」が主目的であり、基準範囲の臨床判断には使わないこと。
+
+meta:
+  version: "1.0-draft"
+  source: "検査項目一覧_ver4.txt（70項目）"
+  reference_source: "JCCLS 共用基準範囲を代表値として記載。自院基準での確認必須"
+  targets_confirmed: "2026-09-18 岩藤先生確認済（JSDT 最新公開版に基づく）"
+  formulas_confirmed: "2026-09-18 全項目の算出式が確定（nPCR・%CGR・クリアスペース率・塩分量・GNRI・TAC）"
+  review_note: |
+    reference（基準範囲）は自院基準での確認が必要。plausible（あり得ない範囲）は
+    生理学的限界に基づくもので、施設差の影響を受けにくい。
+    まず plausible だけを有効にして運用し、reference は表示のみに使うことを推奨する。
+    target（管理目標）は 2026-09-18 時点の JSDT 最新公開版で確定済み。
+  target_sources:
+    CKD-MBD: "CKD-MBD診療ガイドライン2025年改訂版〔学会誌掲載2026年、2026年5月訂正反映〕"
+    腎性貧血: "慢性腎臓病患者における腎性貧血治療のガイドライン 2015年版〔掲載2016年〕"
+    血液透析処方: "維持血液透析ガイドライン：血液透析処方 2013年版〔2014年訂正反映〕"
+
+# ============================================================ 生化学
+items:
+
+  # ---------------------------------------------------------- 背景情報
+  age:
+    name_ja: 年齢
+    aliases: [年齢, age, Age, 歳, 年令, "年齢(歳)", AGE]
+    unit: 歳
+    plausible: [0, 120]
+    note: 透析導入年齢と観察開始時年齢は別物。どちらかを明記すること
+
+  height:
+    name_ja: 身長
+    aliases: [身長, height, Height, "身長(cm)", BH]
+    # ★"HT" を別名にしない★ Ht はヘマトクリットの標準的な略号であり、
+    #   身長に取られると Ht 35〜50% が「あり得ない身長」として NaN にされる。
+    unit: cm
+    unit_variants: {m: 100}
+    plausible: [50, 220]
+
+  weight:
+    name_ja: 体重
+    aliases: [体重, weight, Weight, "体重(kg)", BW, 現体重]
+    unit: kg
+    plausible: [15, 250]
+    timing_required: true
+    note: |
+      ★透析前体重・透析後体重・ドライウェイトは別列にすること★
+      ΔBW = 透析前体重 − 透析後体重 は spKt/V・%CGR・クリアスペース率の入力。
+      透析間体重増加（次回透析前体重 − 今回透析後体重）は別項目（weight_gain）。
+
+  DW:
+    name_ja: ドライウェイト
+    aliases: [ドライウェイト, DW, dry weight, 基礎体重]
+    unit: kg
+    plausible: [15, 250]
+
+  BMI:
+    name_ja: BMI
+    aliases: [BMI, 体格指数, "BMI(kg/m2)"]
+    unit: kg/m²
+    plausible: [8, 70]
+    reference: [18.5, 25.0]
+    derived: true
+    formula: "体重(kg) / 身長(m)^2"
+    requires: [weight, height]
+
+  vintage:
+    name_ja: 透析歴
+    aliases: [透析歴, 透析歴_月, 透析期間, vintage, "透析歴(月)", "透析歴(年)", 導入後期間]
+    unit: 月
+    unit_variants: {年: 12}
+    plausible: [0, 700]
+    note: 単位が「年」か「月」かで 12 倍違う。列名に単位が無い場合は分布で確認すること
+
+  SBP:
+    name_ja: 収縮期血圧
+    aliases: [収縮期血圧, SBP, sBP, 最高血圧, "収縮期血圧(mmHg)"]
+    unit: mmHg
+    plausible: [40, 300]
+    reference: [100, 140]
+    note: 透析前・透析後・中間で全く異なる。タイミングの記録が必須
+
+  DBP:
+    name_ja: 拡張期血圧
+    aliases: [拡張期血圧, DBP, dBP, 最低血圧, "拡張期血圧(mmHg)"]
+    unit: mmHg
+    plausible: [20, 200]
+    reference: [60, 90]
+
+  Td:
+    name_ja: 透析時間
+    aliases: [透析時間, Td, 治療時間, "透析時間(時間)", "透析時間(分)", HD時間, dialysis time]
+    unit: 時間
+    unit_variants: {分: 0.0166666667}
+    plausible: [0.5, 24]
+    note: |
+      ★時間単位で保持する（4時間なら 4）。240 分をそのまま入れない★
+      spKt/V・%CGR の式は Td を時間単位で受け取る。列名に「分」があれば自動換算する。
+
+  weight_gain:
+    name_ja: 透析間体重増加
+    aliases: [透析間体重増加, 体重増加, IDWG, 増加量, "透析間体重増加(kg)", 除水量]
+    unit: kg
+    plausible: [-5, 15]
+    note: |
+      次回透析前体重 − 今回透析後体重。推定食塩摂取量の入力。
+      機器表示の総除水量とは一致しないことがある（飲水・食事・不感蒸泄のため）。
+      負値（体重減少）もありうるので plausible の下限は負にしてある。
+
+  interdialytic_days:
+    name_ja: 透析間隔日数
+    aliases: [透析間隔日数, 透析間隔, 中何日, interdialytic days, 前回透析からの日数]
+    unit: 日
+    plausible: [0.5, 14]
+    note: |
+      中1日なら 2、中2日なら 3。推定食塩摂取量の分母。
+      ★週初めの採血に 2 を使うと食塩摂取量が 1.5 倍に過大評価される★
+
+  BUN_next_pre:
+    name_ja: 次回透析前BUN
+    aliases: [次回透析前BUN, 次回透析前尿素窒素, BUN_next_pre, 次回前BUN, 水曜透析前BUN, 木曜透析前BUN]
+    unit: mg/dL
+    plausible: [1, 300]
+    note: |
+      TAC-BUN 簡便式の第2入力。**週初めの透析終了後 BUN と対にする次の透析の開始前 BUN**。
+      同じ透析回の透析前 BUN（BUN の pre）とは別の列である。
+      透析間に BUN は上昇するので、通常は 週初め透析後BUN < 次回透析前BUN となる。
+      逆転していれば取り違えを疑う（medprep.tac が自動で検出する）。
+
+  interdialytic_hours:
+    name_ja: 非透析時間 Ti
+    aliases: [非透析時間, Ti, 透析間時間, interdialytic hours]
+    unit: 時間
+    plausible: [1, 120]
+    derived: true
+    formula: "Ti = 開始間隔 − Td"
+    note: |
+      ★Ti を開始間隔そのもの（48時間）にしない★
+      開始間隔48時間・透析4時間なら Ti = 44、長い間隔72時間なら Ti = 68。
+      週3回・4時間透析・間隔 48/48/72 なら Σ(Td+Ti) = 168 時間。
+
+  V_post:
+    name_ja: 透析後尿素分布容積
+    aliases: [透析後尿素分布容積, V_post, 分布容積, 尿素分布容積, 総体水分量, TBW]
+    unit: L
+    plausible: [10, 80]
+    note: |
+      クリアスペース率の分母。体重そのものではなく対象溶質の分布容積。
+      推定式（Watson 式等）を使った場合は、その式と時点（透析前/後）を必ず記録すること。
+
+  M_removed:
+    name_ja: 溶質除去量
+    aliases: [除去量, 溶質除去量, M, 尿素窒素除去量, removed mass]
+    unit: mg
+    plausible: [0, 200000]
+    note: |
+      クリアスペース率の分子。BUN を対象にする場合は **尿素窒素の量 [mg-N]**。
+      尿素の質量と尿素窒素の質量を混在させない（尿素 60 g/mol、尿素窒素 28 g/mol）。
+
+  KtV:
+    name_ja: Kt/V
+    aliases: ["Kt/V", KtV, "spKt/V", "eKt/V", ktv]
+    unit: index
+    plausible: [0.1, 5.0]
+    derived: true
+    formula: "Daugirdas 第2世代: −ln(R − 0.008·Td) + (4 − 3.5·R)·ΔBW/BW_post"
+    requires: [BUN_pre, BUN_post, weight_pre, weight_post, Td]
+    target:
+      low: 1.4
+      low_inclusive: true
+      label: 目標
+      population: 週3回・1回6時間未満の維持HD
+      solute: 尿素の single-pool Kt/V
+      source: "維持血液透析ガイドライン2013年 第1章"
+      minimum:
+        low: 1.2
+        low_inclusive: true
+        label: 最低確保量
+    note: ★「最低確保量 1.2」と「目標 1.4 以上」を分けて扱うこと★
+
+  # ---------------------------------------------------------- 生化学
+
+  TG:
+    name_ja: 中性脂肪
+    aliases: ["中性脂肪(TG)", 中性脂肪, TG, トリグリセリド, トリグリセライド, Triglyceride, TG定量]
+    unit: mg/dL
+    plausible: [5, 20000]
+    reference: [30, 149]
+    note: 食後採血で大きく変動。透析患者では高値をとりやすい
+
+  BUN:
+    name_ja: 尿素窒素
+    aliases: ["尿素窒素(BUN)", 尿素窒素, BUN, UN, 血中尿素窒素, Urea nitrogen]
+    unit: mg/dL
+    plausible: [1, 300]
+    reference: [8, 20]
+    timing_required: true
+    note: |
+      ★透析前と透析後で 3〜4 倍違う。採血時点が不詳の BUN からは
+      URR・spKt/V・nPCR・%CGR のいずれも計算しない（medprep.timing）★
+
+  P:
+    name_ja: 無機リン
+    aliases: ["無機リン(P)", 無機リン, P, IP, リン, Phosphorus, 血清リン]
+    unit: mg/dL
+    plausible: [0.3, 20]
+    reference: [2.5, 4.5]
+    timing_required: true
+    target:
+      low: 3.5
+      low_inclusive: true       # 3.5 は含む
+      high: 5.5
+      high_inclusive: false     # ★5.5 は含まない★
+      population: 成人維持血液透析
+      source: "CKD-MBD 2025年改訂版 Statement 3.1.2"
+      note: 栄養状態などを踏まえて個別化する
+
+  Ca:
+    name_ja: カルシウム
+    aliases: ["カルシウム(Ca)", カルシウム, Ca, Calcium, 血清Ca]
+    unit: mg/dL
+    plausible: [3, 20]
+    reference: [8.8, 10.1]
+    timing_required: true
+    note: |
+      アルブミン低値では補正Ca を用いる（hd.corrected_ca が自動計算）。
+      管理目標は実測Ca ではなく **補正Ca**（cCa 項目）に設定されている。
+
+  AMY:
+    name_ja: アミラーゼ
+    aliases: ["アミラーゼ(AMY)", アミラーゼ, AMY, AMS, Amylase]
+    unit: U/L
+    plausible: [1, 10000]
+    reference: [44, 132]
+    note: 透析患者では腎排泄低下により基準範囲上限を超えることが多い
+
+  T-Bil:
+    name_ja: 総ビリルビン
+    aliases: ["総ビリルビン(T-Bil)", 総ビリルビン, T-Bil, TBil, T.Bil, 総ﾋﾞﾘﾙﾋﾞﾝ, Total bilirubin]
+    unit: mg/dL
+    plausible: [0.05, 50]
+    reference: [0.4, 1.5]
+
+  TP:
+    name_ja: 総蛋白
+    aliases: ["総蛋白(TP)", 総蛋白, TP, 総タンパク, 総蛋白質, Total protein]
+    unit: g/dL
+    plausible: [1.5, 15]
+    reference: [6.6, 8.1]
+
+  Alb:
+    name_ja: アルブミン
+    aliases: ["アルブミン(Alb)", アルブミン, Alb, ALB, ｱﾙﾌﾞﾐﾝ, Albumin, 血清アルブミン]
+    unit: g/dL
+    plausible: [0.5, 7]
+    reference: [4.1, 5.1]
+    timing_required: true
+    note: |
+      栄養指標。BCG 法と BCP 改良法で 0.3 g/dL 程度系統差がある（measurement_changes 参照）。
+      透析領域で「3.5 g/dL 以上」がしばしば目安とされるが、これは
+      ガイドラインの管理目標値ではないため target には入れない。
+
+  CK:
+    name_ja: CK（CPK）
+    aliases: ["CK(CPK)", CK, CPK, "CK (CPK)", クレアチンキナーゼ, Creatine kinase]
+    unit: U/L
+    plausible: [5, 200000]
+    sex_specific: true
+    reference_male: [59, 248]
+    reference_female: [41, 153]
+    note: 運動・筋注・転倒後に著明高値。横紋筋融解では 10 万を超えうるため plausible 上限は広い
+
+  LAP:
+    name_ja: ロイシンアミノペプチダーゼ
+    aliases: ["ロイシンアミノペプチターゼ(LAP)", ロイシンアミノペプチダーゼ, LAP]
+    unit: U/L
+    plausible: [5, 1000]
+    reference: [35, 73]
+
+  GGT:
+    name_ja: γ-GT（γ-GTP）
+    aliases: ["γ-GT(γ-GTP)", γ-GT, γ-GTP, γGTP, gGTP, GGT, ガンマGTP, γ-グルタミルトランスフェラーゼ]
+    unit: U/L
+    plausible: [1, 5000]
+    sex_specific: true
+    reference_male: [13, 64]
+    reference_female: [9, 32]
+
+  AST:
+    name_ja: AST（GOT）
+    aliases: ["AST(GOT)", AST, GOT, "AST(GOT)値", ASTGOT]
+    unit: U/L
+    plausible: [2, 20000]
+    reference: [13, 30]
+
+  ALT:
+    name_ja: ALT（GPT）
+    aliases: ["ALT(GPT)", ALT, GPT, ALTGPT]
+    unit: U/L
+    plausible: [1, 20000]
+    sex_specific: true
+    reference_male: [10, 42]
+    reference_female: [7, 23]
+    note: 透析患者は一般に低値。基準範囲内でも肝障害を否定できない
+
+  Cr:
+    name_ja: クレアチニン
+    aliases: ["クレアチニン(Cr)", クレアチニン, Cr, CRE, CREA, Creatinine, 血清クレアチニン, S-Cr]
+    unit: mg/dL
+    unit_variants: {µmol/L: 0.0113, umol/L: 0.0113}
+    plausible: [0.05, 40]
+    sex_specific: true
+    reference_male: [0.65, 1.07]
+    reference_female: [0.46, 0.79]
+    timing_required: true
+    note: |
+      透析患者では 10 mg/dL 前後が普通。低値は筋肉量低下を示し予後不良因子。
+      %CGR は透析前後の Cr の組を必要とする。
+
+  UA:
+    name_ja: 尿酸
+    aliases: ["尿酸(UA)", 尿酸, UA, "UA(尿酸)", Uric acid]
+    unit: mg/dL
+    plausible: [0.2, 30]
+    sex_specific: true
+    reference_male: [3.7, 7.8]
+    reference_female: [2.6, 5.5]
+
+  Fe:
+    name_ja: 血清鉄
+    aliases: ["血清鉄(Fe)", 血清鉄, Fe, 鉄, Iron, S-Fe]
+    unit: µg/dL
+    plausible: [1, 1000]
+    reference: [40, 188]
+    note: 日内変動が大きい。TSAT の分子
+
+  Mg:
+    name_ja: マグネシウム
+    aliases: ["マグネシウム(Mg)", マグネシウム, Mg, Magnesium]
+    unit: mg/dL
+    plausible: [0.3, 10]
+    reference: [1.8, 2.4]
+
+  ChE:
+    name_ja: コリンエステラーゼ
+    aliases: ["コリンエステラーゼ(ChE)", コリンエステラーゼ, ChE, CHE]
+    unit: U/L
+    plausible: [10, 3000]
+    sex_specific: true
+    reference_male: [240, 486]
+    reference_female: [201, 421]
+
+  Na:
+    name_ja: ナトリウム
+    aliases: ["ナトリウム(Na)", ナトリウム, Na, Sodium, 血清Na]
+    unit: mEq/L
+    unit_variants: {mmol/L: 1.0}
+    plausible: [90, 200]
+    reference: [138, 145]
+
+  K:
+    name_ja: カリウム
+    aliases: ["カリウム(K)", カリウム, K, Potassium, 血清K]
+    unit: mEq/L
+    unit_variants: {mmol/L: 1.0}
+    plausible: [1.0, 12.0]
+    reference: [3.6, 4.8]
+    timing_required: true
+    note: |
+      透析前値と透析後値で全く異なる（透析で 1〜2 mEq/L 下がる）。
+      溶血検体で偽高値になるため、単発の高値は検体不良を疑う。
+      「透析前 3.5〜5.5」は慣用の目安でありガイドラインの管理目標ではないため
+      target には入れない。
+
+  Cl:
+    name_ja: クロール
+    aliases: ["クロール(Cl)", クロール, Cl, Chloride, 血清Cl]
+    unit: mEq/L
+    unit_variants: {mmol/L: 1.0}
+    plausible: [60, 160]
+    reference: [101, 108]
+
+  TIBC:
+    name_ja: 総鉄結合能
+    aliases: ["総鉄結合能(TIBC)", 総鉄結合能, TIBC]
+    unit: µg/dL
+    plausible: [50, 800]
+    reference: [253, 365]
+    note: TSAT の分母。UIBC しか無い場合は TIBC = Fe + UIBC で導出可
+
+  LDL:
+    name_ja: LDL-コレステロール
+    aliases: ["LDL-コレステロール(LDL)", LDLコレステロール, LDL, LDL-C, LDLC, LDL-Cho]
+    unit: mg/dL
+    plausible: [5, 1000]
+    reference: [65, 139]
+
+  CEA:
+    name_ja: CEA
+    aliases: [CEA, 癌胎児性抗原, CEA定量]
+    unit: ng/mL
+    plausible: [0, 10000]
+    reference: [0, 5.0]
+    note: 透析患者では腎排泄低下でやや高値。喫煙で上昇
+
+  AFP:
+    name_ja: AFP
+    aliases: ["AFP定量", AFP, αフェトプロテイン, アルファフェトプロテイン]
+    unit: ng/mL
+    plausible: [0, 1000000]
+    reference: [0, 10]
+    note: 対数変換を推奨（分布が極端に右に歪む）
+
+  GLU:
+    name_ja: グルコース
+    aliases: [グルコース, GLU, Glu, 血糖, BS, GLUCOSE, 血糖値, Glucose]
+    unit: mg/dL
+    plausible: [10, 1500]
+    reference: [73, 109]
+    note: 空腹時/随時の区別が必須。透析液ブドウ糖の影響で透析中に変動
+
+  HDL:
+    name_ja: HDL-コレステロール
+    aliases: ["HDL-コレステロール(HDL)", HDLコレステロール, HDL, HDL-C, HDLC, HDL-Cho]
+    unit: mg/dL
+    plausible: [3, 200]
+    reference: [40, 90]
+
+# ============================================================ 血算
+  WBC:
+    name_ja: 白血球数
+    aliases: ["末梢血｜白血球数(WBC)", 白血球数, WBC, 白血球, ﾎﾜｲﾄ, "WBC(/µL)"]
+    unit: /µL
+    unit_variants: {"10^3/µL": 1000, "×10^3/µL": 1000, "10^9/L": 1000}
+    plausible: [100, 500000]
+    reference: [3300, 8600]
+    note: 単位ゆれが最多の項目。値が 3〜20 の範囲に集中していれば ×10³/µL と判定する
+
+  RBC:
+    name_ja: 赤血球数
+    aliases: ["末梢血｜赤血球数(RBC)", 赤血球数, RBC, 赤血球]
+    unit: ×10^4/µL
+    unit_variants: {"10^6/µL": 100, "/µL": 0.0001, "10^12/L": 100}
+    plausible: [50, 900]
+    sex_specific: true
+    reference_male: [435, 555]
+    reference_female: [386, 492]
+    note: 日本は ×10⁴/µL（例 450）、欧米は ×10⁶/µL（例 4.50）。二峰性を検出したら単位混在を疑う
+
+  Hb:
+    name_ja: 血色素量（ヘモグロビン）
+    aliases: ["末梢血｜血色素量(Hb)", 血色素量, Hb, HGB, ヘモグロビン, 血色素, Hemoglobin]
+    unit: g/dL
+    unit_variants: {g/L: 0.1}
+    plausible: [1.5, 25]
+    sex_specific: true
+    reference_male: [13.7, 16.8]
+    reference_female: [11.6, 14.8]
+    timing_required: true
+    target:
+      low: 10.0
+      low_inclusive: true
+      high: 12.0
+      high_inclusive: false     # ★12.0 は含まない★
+      population: 成人 HD 患者
+      measurement_point: 週初めの採血値
+      source: "腎性貧血治療ガイドライン2015年版 第2章"
+      note: 病態に応じて個別化する
+    note: 0 や 1 は入力ミス。ESA 投与状況を共変量に入れないと解釈を誤る
+
+  Ht:
+    name_ja: ヘマトクリット値
+    aliases: ["末梢血｜ヘマトクリツト値(Ht)", ヘマトクリット, Ht, HCT, ヘマトクリツト]
+    unit: "%"
+    plausible: [5, 75]
+    sex_specific: true
+    reference_male: [40.7, 50.1]
+    reference_female: [35.1, 44.4]
+
+  MCV:
+    name_ja: MCV
+    aliases: ["末梢血｜MCV", MCV, 平均赤血球容積]
+    unit: fL
+    plausible: [50, 150]
+    reference: [83.6, 98.2]
+
+  MCH:
+    name_ja: MCH
+    aliases: ["末梢血｜MCH", MCH, 平均赤血球血色素量]
+    unit: pg
+    plausible: [15, 50]
+    reference: [27.5, 33.2]
+
+  MCHC:
+    name_ja: MCHC
+    aliases: ["末梢血｜MCHC", MCHC, 平均赤血球血色素濃度]
+    unit: "%"
+    plausible: [20, 45]
+    reference: [31.7, 35.3]
+    note: MCV・MCH・MCHC は Hb/RBC/Ht から計算できる。整合しない行は入力ミス（derive が検算）
+
+  Plt:
+    name_ja: 血小板数
+    aliases: ["末梢血｜血小板数(Plt)", 血小板数, Plt, PLT, 血小板, Platelet]
+    unit: ×10^4/µL
+    unit_variants: {"10^3/µL": 0.1, "/µL": 0.0001, "10^9/L": 0.1}
+    plausible: [0.1, 300]
+    reference: [15.8, 34.8]
+    note: 日本は ×10⁴/µL（例 25.0）、欧米は ×10³/µL（例 250）。単位混在の検出対象
+
+# ============================================================ 凝固
+  APTT:
+    name_ja: APTT
+    aliases: [APTT, 活性化部分トロンボプラスチン時間]
+    unit: 秒
+    plausible: [10, 300]
+    reference: [24, 39]
+    note: 透析回路のヘパリンが混入した検体で延長する。採血部位の記録が要る
+
+  PT_sec:
+    name_ja: プロトロンビン時間（秒）
+    aliases: ["プロトロンビン時間(PT)｜", "プロトロンビン時間(PT)", PT, PT秒, "PT(秒)"]
+    unit: 秒
+    plausible: [5, 200]
+    reference: [10, 13]
+
+  PT_pct:
+    name_ja: プロトロンビン時間（％）
+    aliases: ["プロトロンビン時間(PT)｜％", PT活性, "PT(%)", PT％]
+    unit: "%"
+    plausible: [1, 200]
+    reference: [70, 130]
+
+  PT_ratio:
+    name_ja: プロトロンビン時間（比）
+    aliases: ["プロトロンビン時間(PT)｜比", PT比, PT ratio]
+    unit: 比
+    plausible: [0.3, 20]
+    reference: [0.85, 1.15]
+
+  PT_INR:
+    name_ja: PT-INR
+    aliases: ["プロトロンビン時間(PT-INR)", PT-INR, INR, PTINR]
+    unit: 比
+    plausible: [0.3, 20]
+    reference: [0.85, 1.15]
+    note: PT の 4 表記は相互に導出可能。1 つに絞るか、多重共線性として報告される
+
+# ============================================================ 透析関連・内分泌
+  B2MG:
+    name_ja: β2ミクログロブリン
+    aliases: ["β2マイクログロブリン(β2MG)", β2マイクログロブリン, β2MG, B2MG, βミクログロブリン, ベータ2ミクログロブリン]
+    unit: mg/L
+    plausible: [0.1, 100]
+    reference: [0.8, 2.0]
+    timing_required: true
+    target:
+      high: 30
+      high_inclusive: false     # ★30 未満★
+      measurement_point: 最大透析間隔後の透析前値
+      source: "維持血液透析ガイドライン2013年 第2章"
+      stretch:
+        high: 25
+        high_inclusive: false
+        evidence: 専門家意見（オピニオン）
+        note: さらに 25 mg/L 未満を目指す
+    note: 透析患者では基準範囲を大きく超えるのが正常。基準範囲での外れ値判定は不可
+
+  Ferritin:
+    name_ja: フェリチン
+    aliases: [フェリチン, Ferritin, FER, 血清フェリチン]
+    unit: ng/mL
+    plausible: [0.5, 100000]
+    sex_specific: true
+    reference_male: [39.4, 340]
+    reference_female: [3.6, 114]
+    note: 急性期反応物質。炎症で上昇するため CRP と併せて解釈。対数変換を推奨
+
+  iPTH:
+    name_ja: インタクトPTH
+    aliases: ["インタクトPTH(iPTH)", インタクトPTH, iPTH, i-PTH, PTH-intact, intact PTH]
+    unit: pg/mL
+    plausible: [1, 5000]
+    reference: [10, 65]
+    timing_required: true
+    target:
+      high: 240
+      high_inclusive: false     # ★240 未満★
+      low: null                 # ★一律の下限を設定しない★
+      population: 成人維持血液透析
+      source: "CKD-MBD 2025年改訂版 Statement 4.1.1〜4.1.3"
+      note: 原則として一律の下限を設定せず、症例ごとに個別化する
+      conditional:
+        - condition: 活性型ビタミンD製剤のみで管理する場合
+          low: 60
+          low_inclusive: true
+          high: 240
+          high_inclusive: false
+    note: |
+      ★下限を全患者共通で 60 にしないこと★（2025年改訂版での重要な変更点）。
+      対数変換を推奨（右に強く歪む）。whole PTH との換算に注意（whole ≒ intact × 0.6）
+
+  GA:
+    name_ja: グリコアルブミン
+    aliases: ["グリコアルブミン(GA)", グリコアルブミン, GA, グリコアルブミン(%)]
+    unit: "%"
+    plausible: [5, 80]
+    reference: [11, 16]
+    note: 透析患者では HbA1c より血糖管理の指標として優れるとされる。管理目標は要確認
+
+  HbA1c:
+    name_ja: ヘモグロビンA1c
+    aliases: ["ヘモグロビンA1c(HbA1c)", HbA1c, ヘモグロビンA1c, A1c, HbA1c(NGSP)]
+    unit: "%"
+    unit_variants: {mmol/mol: null}
+    plausible: [3, 20]
+    reference: [4.6, 6.2]
+    note: |
+      NGSP 値と JDS 値が混在しうる（NGSP = JDS × 1.02 + 0.25）。
+      2012年以前のデータは JDS の可能性がある。時系列で 0.4% 程度の段差があれば混在を疑う。
+      透析患者では貧血・ESA により偽低値となるため GA を優先
+
+  Zn:
+    name_ja: 亜鉛
+    aliases: ["亜鉛(Zn)", 亜鉛, Zn, Zinc]
+    unit: µg/dL
+    plausible: [10, 500]
+    reference: [80, 130]
+
+  hANP:
+    name_ja: hANP
+    aliases: [hANP, ANP, 心房性ナトリウム利尿ペプチド, "ヒト心房性ナトリウム利尿ペプチド(hANP)"]
+    unit: pg/mL
+    plausible: [0, 5000]
+    reference: [0, 43]
+    note: 体液量の指標。透析前後で大きく変わるので採血タイミングが必須
+
+  BNP:
+    name_ja: BNP
+    aliases: ["ヒト脳性ナトリウム利尿ペプチド(BNP)", BNP, 脳性ナトリウム利尿ペプチド]
+    unit: pg/mL
+    plausible: [0, 50000]
+    reference: [0, 18.4]
+    note: 対数変換を推奨。BNP と NT-proBNP は別項目であり混同しないこと
+
+  NT_proBNP:
+    name_ja: NT-proBNP
+    aliases: ["NT-pro BNP", NT-proBNP, NTproBNP, "NT-proBNP(pg/mL)"]
+    unit: pg/mL
+    plausible: [0, 100000]
+    reference: [0, 125]
+    note: 腎排泄されるため透析患者では著明高値。BNP の約 5〜10 倍の値域
+
+  FT3:
+    name_ja: FreeT3
+    aliases: ["FreeT3", FT3, "F-T3", 遊離T3, フリーT3]
+    unit: pg/mL
+    plausible: [0.1, 50]
+    reference: [2.3, 4.0]
+
+  FT4:
+    name_ja: FreeT4
+    aliases: ["FreeT4", FT4, "F-T4", 遊離T4, フリーT4]
+    unit: ng/dL
+    plausible: [0.05, 15]
+    reference: [0.9, 1.7]
+
+  CRP:
+    name_ja: C反応性蛋白
+    aliases: ["C反応性蛋白(CRP)定量", CRP, C反応性蛋白, CRP定量, hsCRP]
+    unit: mg/dL
+    unit_variants: {mg/L: 0.1}
+    plausible: [0, 100]
+    reference: [0, 0.14]
+    note: |
+      mg/dL と mg/L の混在が最も多い項目。値が 0〜30 なら mg/dL、0〜300 なら mg/L を疑う。
+      対数変換（log(CRP + 0.1)）を推奨。ゼロを含むため log1p ではなく定数加算で扱う
+
+# ============================================================ 白血球分画（%）
+  Neutro:
+    name_ja: 好中球
+    aliases: ["末梢血液像｜好中球", 好中球, Neut, Neutro, NEUT]
+    unit: "%"
+    plausible: [0, 100]
+    reference: [40, 70]
+
+  Band:
+    name_ja: 桿状核球
+    aliases: ["末梢血液像｜桿状核球", 桿状核球, Band, Stab]
+    unit: "%"
+    plausible: [0, 100]
+    reference: [0, 8]
+
+  Seg:
+    name_ja: 分葉核球
+    aliases: ["末梢血液像｜分葉核球", 分葉核球, Seg]
+    unit: "%"
+    plausible: [0, 100]
+    reference: [35, 70]
+
+  Eosino:
+    name_ja: 好酸球
+    aliases: ["末梢血液像｜好酸球", 好酸球, Eosino, Eo, EOS]
+    unit: "%"
+    plausible: [0, 100]
+    reference: [0, 8]
+
+  Baso:
+    name_ja: 好塩基球
+    aliases: ["末梢血液像｜好塩基球", 好塩基球, Baso, BASO]
+    unit: "%"
+    plausible: [0, 100]
+    reference: [0, 2]
+
+  Mono:
+    name_ja: 単球
+    aliases: ["末梢血液像｜単球", 単球, Mono, MONO]
+    unit: "%"
+    plausible: [0, 100]
+    reference: [2, 10]
+
+  Lympho:
+    name_ja: リンパ球
+    aliases: ["末梢血液像｜リンパ球", リンパ球, Lym, Lympho, LYMPH]
+    unit: "%"
+    plausible: [0, 100]
+    reference: [18, 50]
+
+# ============================================================ 酵素（測定法変更あり）
+  ALP:
+    name_ja: アルカリフォスファターゼ
+    aliases: ["アルカリフォスファターゼ(ALP)", ALP, アルカリホスファターゼ, アルカリフォスファターゼ]
+    unit: U/L
+    method: IFCC
+    plausible: [5, 10000]
+    reference: [38, 113]
+    reference_legacy_JSCC: [106, 322]
+    note: ★measurement_changes を必ず参照（2020年の測定法変更で値が約1/3になる）★
+
+  LDH:
+    name_ja: LD（LDH）
+    aliases: ["LD (LDH)", LDH, LD, 乳酸脱水素酵素, "LD(LDH)"]
+    unit: U/L
+    method: IFCC
+    plausible: [20, 20000]
+    reference: [124, 222]
+    reference_legacy_JSCC: [119, 229]
+    note: ALP ほどではないが JSCC→IFCC で系統差がある
+
+# ============================================================ 派生指標・透析指標
+  GNRI:
+    name_ja: GNRI（老年栄養リスク指数）
+    aliases: [GNRI, 老年栄養リスク指数, Geriatric Nutritional Risk Index]
+    unit: index
+    plausible: [40, 140]
+    derived: true
+    formula: "14.89 × Alb(g/dL) + 41.7 × (体重 / 理想体重)"
+    ideal_body_weight: "身長(m)² × 22（日本の透析領域で慣用）"
+    requires: [Alb, weight, height]
+    implemented: medprep.hd.gnri
+    weight_source: "ドライウェイト優先、無ければ透析後体重（2026-09-18 確定）"
+    weight_source_note: 透析前体重は使わない（体液貯留分が栄養指標に混入するため）
+    cap_ratio: true          # 体重/理想体重 > 1 は 1 に丸める（原法の規約。既定）
+    cutoffs: {高度リスク: "<82", 中等度リスク: "82–<92", 軽度リスク: "92–<98", リスクなし: "≥98"}
+    note: |
+      体重の選び方は確定済み。理想体重の定義（BMI 22 換算）と丸めの規約（cap_ratio）は
+      既定としてこの値を採用しているが、施設の運用に合わせて変更できる。
+      どの体重を使ったかは症例ごとにレポートへ出す。カットオフは文献により異なる。
+
+  cCa:
+    name_ja: 補正Ca
+    aliases: [補正Ca, 補正カルシウム, corrected Ca, cCa, 補正Ｃａ]
+    unit: mg/dL
+    plausible: [3, 20]
+    derived: true
+    formula: "Payne 式: Alb < 4.0 のとき  補正Ca = 実測Ca + 4 − Alb、Alb ≥ 4.0 のとき 実測Ca"
+    requires: [Ca, Alb]
+    target:
+      low: 8.4
+      low_inclusive: true
+      high: 9.5
+      high_inclusive: false     # ★9.5 は含まない（2025年改訂版で 10.0 から変更）★
+      population: 成人維持血液透析
+      source: "CKD-MBD 2025年改訂版 Statement 3.2.1"
+    note: |
+      ★2025年改訂版で上限が 10.0 → 9.5 未満に変更された★。
+      Payne 式は低 Alb 時にイオン化 Ca との乖離が生じるため、補正値は目安として扱う。
+      Alb の測定法（BCG / BCP改良）が変わると補正Ca も系統的にずれる。
+
+  cCaxP:
+    name_ja: 補正Ca × P
+    aliases: [補正Ca×P, 補正CaxP, CaxP, Ca×P, カルシウムリン積]
+    unit: mg²/dL²
+    plausible: [5, 300]
+    derived: true
+    formula: "補正Ca × P"
+    requires: [cCa, P]
+    note: |
+      JSDT の現行ガイドラインは Ca と P を **個別に** 管理する方針であり、
+      Ca×P 積に管理目標値は設定されていない。したがって target は置かない。
+      研究目的で使う場合は、補正Ca と P の両方を同時にモデルに入れた場合との
+      違いを示せるようにすること（Ca×P は 2 変数の積であり交互作用項に相当する）。
+
+  TSAT:
+    name_ja: トランスフェリン飽和度
+    aliases: [TSAT, トランスフェリン飽和度, Tsat, 鉄飽和度]
+    unit: "%"
+    plausible: [0, 100]
+    reference: [20, 50]
+    derived: true
+    formula: "Fe / TIBC × 100"
+    requires: [Fe, TIBC]
+    implemented: medprep.hd.tsat
+    note: 100% を超える値は入力ミス（Fe > TIBC はあり得ない）。audit が検出する
+
+  nPCR:
+    name_ja: 標準化蛋白異化率
+    aliases: [nPCR, nPNA, 標準化蛋白異化率, normalized protein catabolic rate]
+    unit: g/kg/day
+    plausible: [0.1, 3.0]
+    reference: [0.9, 1.4]
+    derived: true
+    formula: "nPCR = 0.0136 × Kt/V × (BUN透析前 + BUN透析後)/2 + 0.251"
+    requires: [BUN_pre, BUN_post, KtV]
+    source: "Kaynar K, et al. Hippokratia. 2012;16(3):236-240."
+    confirmed: "2026-09-18 岩藤先生指示"
+    implemented: medprep.hd.npcr
+    note: |
+      BUN_mean は透析前後2点の **算術平均** であり時間平均 BUN ではない。
+      Kt/V には spKt/V（Daugirdas 第2世代）を用いる。
+      ★簡便推算式であり、JSDT 統計調査や施設の透析管理ソフトと同一の算出法ではない。
+      nPCR の算出法が異なれば %CGR の G_ext・G_int も変わる★
+
+  pct_CGR:
+    name_ja: "%クレアチニン産生速度（%CGR）"
+    aliases: ["％CGR", "%CGR", CGR, クレアチニン産生速度]
+    unit: "%"
+    plausible: [10, 300]
+    derived: true
+    requires: [sex, age, BUN_pre, BUN_post, Cr_pre, Cr_post, weight_pre, weight_post, Td]
+    confirmed: "2026-09-18 岩藤先生提示の11ステップ式"
+    implemented: medprep.hd.percent_cgr
+    verified: "提示された計算例（男性60歳）と 1e-11 以内で一致"
+    source: |
+      滋賀腎・透析研究会「適正HD指標の計算 Kt/V,nPCRなど」
+      （spKt/V・Cr_corr・A・G_total・G_ext・G_int・G_ref）
+      ＋ Kaynar 2012（nPCR 簡便式）
+    applicability:
+      - 通常の週3回血液透析を想定。G_total の式には 72 時間が固定値として含まれる
+      - 中2日の長い透析間隔に対応する **週初めの採血** を想定する
+      - 任意の透析曜日・連日透析・週2回透析にそのまま適用しない（72 を 48 に置換してよい意味ではない）
+      - 尿中クレアチニン排泄の補正を含まない。残腎機能があると内因性産生を過小評価しうる
+      - 透析前後の採血は同一セッションのもの
+    steps: |
+      1  ΔBW     = BW_pre − BW_post
+      2  R       = BUN_post / BUN_pre
+      3  spKt/V  = −ln(R − 0.008·Td) + (4 − 3.5·R)·ΔBW / BW_post
+      4  nPCR    = 0.0136·spKt/V·(BUN_pre + BUN_post)/2 + 0.251
+      5  Cr_corr = (−81.622·ln(Cr_post/Cr_pre)/(60·Td) + 0.942)·Cr_post
+      6  L = ln(Cr_corr/Cr_pre)
+         D = (0.019·Td + 0.999)·L − (0.00367·Td − 0.0219)
+         A = 3864 + (7.8·Td + 411)·L − 1.5·Td − 1449/D
+      7  G_total = Cr_pre·(7056/A + (ΔBW/BW_post)·240/(72 − Td))
+      8  G_ext   = 7.79·nPCR² − 7.91·nPCR + 1.93
+      9  G_int   = G_total − G_ext
+      10 G_ref   = 23.53 − 0.15·age（男） / 19.58 − 0.12·age（女）
+      11 %CGR    = 100·G_int / G_ref
+    note: |
+      100% は基準と同等の内因性産生速度を意味する。
+      80% という結果は筋肉量が厳密に 80% という意味ではない。
+      ★異常な入力値や負の産生速度が出ても自動で 0 に丸めない。NaN にして理由を残す★
+
+  clearspace_AV:
+    name_ja: クリアスペース率 A/V
+    aliases: ["クリアスペース率A/V", クリアスペース率, クリアスペース, CSR, "A/V"]
+    unit: "%"
+    plausible: [0, 200]
+    derived: true
+    confirmed: "2026-09-18 岩藤先生提示の定義"
+    implemented: medprep.hd.clear_space_ratio / clear_space_ratio_estimated
+    verified: "提示された計算例（15120 mg-N, 60 mg/dL, 36 L → 70.0%）と完全一致"
+    definition: |
+      A = M / C_pre              1回の透析で除去された総量 M を透析前濃度で除した等価浄化容積 [L]
+      A/V      = A / V           A を対象溶質の分布容積 V で標準化（無次元）
+      A/V[%]   = 100 · M_mg / (10 · C_pre[mg/dL] · V_post[L])
+    methods:
+      実測法:
+        requires: [M_mg, C_pre_mg_dL, V_post_L]
+        M_from_effluent: "M[mg] = 10 · C_effluent[mg/dL] · V_effluent[L]（新鮮透析液に対象溶質なしが前提）"
+        note: 分割採取の場合は区間ごとの除去量を合計する。排液の一部のみ採取した場合、採取液量を全排液量として使わない
+      推算法:
+        formula: "A/V[%] = 100·(V_pre/V_post − C_post/C_pre + G·t/(10·C_pre·V_post))"
+        simplified: "産生を無視し ΔBW で体液量差を近似: A/V[%] = 100·(1 + ΔBW/V_post − C_post/C_pre)"
+        note: ★実測値と同一視しないこと。結果名に「推定」を付ける★
+    note: |
+      ★A は面積ではなく容積。V は体重そのものではなく対象溶質の分布容積★
+      BUN を使う場合、M も尿素窒素の除去量 [mg-N] とする。尿素と尿素窒素を混在させない。
+      分母に透析後 BUN を入れない。
+      透析後 V で標準化した指標は条件により 100% を超えうる。
+      **出力を一律に 0〜100% へ切り詰めない。**
+      G = 0 は「産生を無視する近似を採用する」という明示的な選択であり、
+      産生速度が不明であることと 0 であることは同じではない。
+      A/V と Kt/V は同じ指標ではない（等価なのは体液量一定・産生なし・単一プールの仮定下のみ）。
+    must_record: [対象溶質, Mの取得法, Vの算出法と時点, 結果が比率か%か]
+
+  salt:
+    name_ja: 推定食塩摂取量
+    aliases: [塩分量, 食塩摂取量, 推定食塩摂取量, NaCl摂取量, 推定塩分摂取量]
+    unit: g/day
+    plausible: [0, 30]
+    derived: true
+    confirmed: "2026-09-18 岩藤先生指示：透析間体重増加と Na からの推定"
+    implemented: medprep.hd.salt_intake
+    formula: |
+      摂取Na[mEq] = 透析間体重増加[kg → L] × 血清Na[mEq/L]
+      食塩[g]     = 摂取Na / 17          （1 g NaCl ≒ 17 mEq Na）
+      1日あたり    = 食塩[g] / 透析間隔日数
+    requires: [weight_gain, Na_pre, interdialytic_days]
+    assumptions:
+      - 透析間に増加した体液の Na 濃度が血清 Na 濃度に等しいとみなしている。自由水を多く摂った患者では過大評価する
+      - 不感蒸泄・残腎からの Na 排泄・便中排泄を無視している
+      - 透析間隔日数は中1日なら 2、中2日なら 3。週初めの採血に 2 を使うと 1.5 倍の過大評価になる
+    note: |
+      厳密な摂取量ではない。結果の名称に「推定」を残すこと。
+      ★透析間隔日数の列があれば実日数を使う。無い場合は既定 2 とするが必ず警告を出す★
+
+  TAC:
+    name_ja: TAC-BUN（時間平均尿素窒素濃度）
+    aliases: [TAC, 時間平均濃度, "TAC-BUN", TACBUN, TACurea, "TAC(urea)", 時間平均尿素窒素濃度]
+    unit: mg/dL
+    solute: BUN                # 尿素窒素。尿素分子全体の質量濃度とは異なる
+    plausible: [0, 200]
+    derived: true
+    confirmed: "2026-09-18 岩藤先生提示の定義"
+    implemented: medprep.tac
+    verified: "簡便式の計算例（20, 60 → 40 mg/dL）および換算（40 → 尿素 85.7 mg/dL、14.3 mmol/L）と一致"
+    definition: "TAC_X = (1/T)∫[0,T] C_X(t) dt = AUC_X(0,T) / T 。週間評価は T = 168 時間（透析中と非透析中の両方を含む）"
+    methods:
+      simple:
+        formula: "TAC_BUN = (週初め透析後BUN + 次回透析開始前BUN) / 2"
+        requires: [BUN_post_first, BUN_pre_second]
+        example: "月・水・金透析なら (月曜透析後 + 水曜透析前) / 2"
+        kind: simple
+        note: 規則的な週3回血液透析における週間平均の簡便な推定値。168時間の積分による厳密値ではない
+      trapezoid:
+        formula: "AUC = Σ((C[i]+C[i+1])/2)·(t[i+1]−t[i]) 、TAC = AUC / (t[n]−t[0])"
+        requires: [時刻の列, 濃度の列]
+        kind: auc
+        note: 定義に基づく数値積分。特定学会の専用推算式ではない。時刻は厳密な昇順であること
+      linear:
+        formula: "Σ((C_pre+C_post)/2·Td + (C_post+C_pre_next)/2·Ti) / Σ(Td+Ti)"
+        requires: [BUN_pre, BUN_post, BUN_next_pre, Td, interdialytic_hours]
+        kind: auc
+        note: |
+          Ti = 開始間隔 − Td。★Ti を 48 時間にしない★
+          （開始間隔48時間・透析4時間なら Ti = 44、長い間隔72時間なら Ti = 68）。
+          4時間透析3回・間隔48/48/72 なら全時間 168 時間になる（medprep が検算する）。
+          C_pre[4] は翌週第1回の実測透析前濃度。週ごとの状態が同じという仮定を置く場合のみ C_pre[4] = C_pre[1] とできる。
+          透析中の濃度低下は一般に直線ではないため近似値である。
+    conversion:
+      urea_mg_dL: "TAC_BUN × (60/28)"
+      urea_mmol_L: "TAC_BUN / 2.8"
+      note: 60 と 28 は尿素分子量および窒素部分の質量を丸めた値。同一の評価期間・同一の時間平均法に対してのみ成り立つ
+    must_not_confuse_with:
+      - "同じ透析回の「透析前BUNと透析後BUNの平均」（＝ nPCR の BUN_mean）"
+      - "「週初め透析前BUNと次回透析前BUNの平均」"
+    must_record: [対象物質, 結果と単位, 算出法, 入力採血日時, 透析日程, 透析後採血のタイミング／手順]
+    note: |
+      ★単に検査値を全部足して検査回数で割る方法は、測定間隔が異なる場合には時間平均にならない★
+      簡便値（kind=simple）と AUC 由来値（kind=auc）は区別して保存する。
+      欠測は 0 として扱わず算出不能（NaN）とする。負値・非数値は入力エラーとする。
+      TAC-BUN は濃度の指標であり、Kt/V・除去率・nPCR と同一ではない。
+      BUN は尿素除去だけでなく蛋白摂取・異化・残存腎機能にも影響されるため、
+      低 TAC-BUN だけで良好な透析と判定せず、栄養状態や nPCR と併せて評価する。
+      不規則な日程・週2回・頻回透析・急性病態に簡便式と同じ精度を前提にしない。
+      管理目標値は設定しない（提示資料は算出方式の整理であり、ガイドライン推奨ではない）。
+    source: |
+      三島クリニック「透析室ニュース 第30号」2007-09-06（TAC-BUN の項、簡便法）。
+      医療機関の説明資料であり日本透析医学会のガイドラインではない。
+      定義式・台形則・時間加重近似・単位換算は、時間平均の数学的定義と分子量に基づく整理。
+
+# ============================================================ 測定法の変更（時系列データでの段差）
+measurement_changes:
+  - item: ALP
+    date: "2020-04"
+    change: "JSCC 法 → IFCC 法"
+    effect: "値がおよそ 1/3 になる（例: 240 U/L → 80 U/L）"
+    detection: "2020年4月前後で分布に段差がある場合は換算が必要"
+    action: "IFCC ≒ JSCC × 0.35 で近似換算できるが、個別値の厳密換算は不可。期間を共変量に入れるか、期間で層別すること"
+  - item: LDH
+    date: "2020-04"
+    change: "JSCC 法 → IFCC 法"
+    effect: "系統差は小さいが存在する"
+  - item: HbA1c
+    date: "2012-04"
+    change: "JDS 値 → NGSP 値"
+    effect: "NGSP = JDS × 1.02 + 0.25（約 +0.4%）"
+  - item: Alb
+    date: "施設により異なる"
+    change: "BCG 法 → BCP 改良法"
+    effect: "BCP 改良法は BCG より 0.2〜0.3 g/dL 低く出る"
+    action: "低アルブミン血症の判定と補正Ca の計算に直接影響する。測定法を記録すること"
+
+# ============================================================ 欠損コード（全項目共通）
+missing_codes:
+  numeric: [999, 9999, 99999, -1, -9, -99, -999, 9999999]
+  text: ["", "-", "ー", "―", ".", "・", "なし", "未実施", "未測定", "検査なし", "該当なし",
+         "N/A", "NA", "n/a", "#N/A", "#VALUE!", "測定不能", "検体不良", "中止", "不明", "***"]
+  note: |
+    数値の欠損コードは「その列の分布から浮いた離散的な値」として検出し、
+    自動では NaN 化せず schema.yaml に候補として列挙して確認を求める。
+    9999 が実測値でありうる項目（フェリチン、AFP、NT-proBNP）があるため、
+    一律の NaN 化は危険である。
+
+# ============================================================ 検出限界の表記
+limit_of_detection:
+  patterns: ["<", "＜", ">", "＞", "≦", "≧", "以下", "以上", "未満"]
+  default_policy: "half"     # 'half'（1/2 LOD を代入）| 'lod'（LOD をそのまま）| 'nan' | 'keep_flag'
+  note: |
+    "<0.1" は 0.05 に置換し、同時に censored_low フラグ列を立てる。
+    CRP、BNP、iPTH、フェリチン、AFP で頻出する。
+    フラグ列を捨てると「検出限界以下だった」という情報が失われるため、既定では必ず残す。
+
+# ============================================================ 分画の検算
+composition_groups:
+  白血球分画:
+    members: [Neutro, Eosino, Baso, Mono, Lympho]      # ★2026-09-18 確定★
+    sum_to: 100
+    tolerance: 3
+    confirmed: "2026-09-18 岩藤先生指示：好中球を使う"
+    excluded_members: [Band, Seg]
+    note: |
+      好中球 = 桿状核球 + 分葉核球 なので、7 項目すべてを合計すると約 200% になる。
+      検算には **好中球** を使い、桿状核球・分葉核球は合計に含めない。
+      桿状核球・分葉核球は列としては保持し、
+      「桿状核球 + 分葉核球 ≒ 好中球」の整合性検査に別途使う。
+  好中球の内訳:
+    members: [Band, Seg]
+    equals: Neutro
+    tolerance: 3
+    note: 桿状核球 + 分葉核球 が 好中球 と一致するかの検算。両方が入力されている症例のみ

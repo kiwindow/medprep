@@ -1,0 +1,96 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "medprep"
+version = "0.1.0"
+description = "医学研究データの前処理・記述統計・生存時間解析を自動化する。日本腎・血液浄化AI学会 演習講座「鹿鳴館」教材。"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Kazuhiro Iwadoh" }]
+maintainers = [{ name = "Kazuhiro Iwadoh" }]
+keywords = ["medical", "dialysis", "preprocessing", "survival-analysis", "table-one", "nephrology"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Healthcare Industry",
+  "Intended Audience :: Science/Research",
+  "Natural Language :: Japanese",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+
+# 講座の環境（uv, Python 3.12）で 1 回の導入だけで解析まで通せるようにしてある。
+# 重い学習ライブラリ（torch / xgboost / lightgbm）はノートブック側の責務であり、ここには入れない。
+dependencies = [
+  "pandas>=2.0",
+  "numpy>=1.24",
+  "scipy>=1.10",
+  "pyyaml>=6.0",
+  "scikit-learn>=1.4",
+  "statsmodels>=0.14",
+  "matplotlib>=3.7",
+  "seaborn>=0.13",
+  "tableone>=0.9",
+  "lifelines>=0.30",
+  "missingno>=0.5",
+  "openpyxl>=3.1",
+  "jinja2>=3.1",
+  "matplotlib-fontja>=1.1",
+]
+
+[project.optional-dependencies]
+# ydata-profiling は matplotlib<=3.10 / numpy<2.4 / scipy<1.17 を固定し、
+# さらに pkg_resources を使うため setuptools<81 を要求する。Colab の既定環境を
+# ダウングレードさせるので、既定では入れない。詳細は docs/DECISIONS.md を参照。
+report = ["ydata-profiling>=4.18", "setuptools<81"]
+impute = ["miceforest>=6.0"]
+dimred = ["umap-learn>=0.5"]
+spss = ["pyreadstat>=1.2"]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
+
+[project.urls]
+Homepage = "https://github.com/kiwindow/medprep"
+Repository = "https://github.com/kiwindow/medprep"
+Issues = "https://github.com/kiwindow/medprep/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/medprep"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/medprep", "tests", "examples", "README.md", "LICENSE", "CHANGELOG.md"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+  "E501",   # 行長は line-length で見る
+  "B905",   # zip(strict=) は 3.10+ 限定の書き換えで、可読性を落とす箇所がある
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]
+# examples/ は講座で読ませる台本であり、対応する処理を 1 行にまとめた圧縮した書き方を
+# あえて使っている。ここだけ複文と lambda を許す。
+"examples/*" = ["E402", "E701", "E702", "E731"]
+
+# ruff format は使わない。
+#   全角文字を幅 1 として数えるため、日本語のコメントや文字列が多いこの
+#   コードベースでは「95 文字」と判定された行が実際には 190 桁で表示される。
+#   整形すると短い行が結合されて、かえって読めなくなる。
+#   欠陥を捕まえる ruff check（未使用の import、未使用変数、実際のバグ）は CI で回す。

@@ -1,0 +1,108 @@
+"""medprep — 医学研究データの前処理・記述統計・生存時間解析を自動化する。
+
+日本腎・血液浄化AI学会（JAINBP）演習講座「鹿鳴館」の教材として開発している。
+
+設計の原則
+----------
+1. **全自動は「決定の自動化」ではなく「決定の明示化」**
+   `autoprep()` は 1 行で最後まで走るが、そこで下した判断（この列は ID、
+   この値は欠損コード、この症例は除外）はすべて `schema.yaml` に理由つきで
+   書き出される。人がそれを直して再実行できる。
+
+2. **リークを構造的に不可能にする**
+   学習を伴う変換（補完の統計量・スケーラ・エンコーダのカテゴリ集合・
+   Winsorize の閾値）はすべて sklearn の ColumnTransformer に閉じ込め、
+   `fit` は train にしか呼べない構造にする。
+
+3. **推測して計算しない**
+   採血時点（透析前/後）が不詳の値から透析指標を計算しない。
+   日と月の順序が確定できない日付列を勝手に解釈しない。
+   欠測を 0 で埋めない。異常値を 0 に丸めない。
+   計算できないときは NaN を返し、理由を報告する。
+
+4. **外れ値と入力ミスを区別する**
+   Hb 0 g/dL は外れ値ではなく入力ミスであり、winsorize してはならない。
+   この区別を医学領域辞書（`dict/ranges_ja.yaml`）が担う。
+
+使い方
+------
+    import medprep as mp
+
+    # 生存時間データ（ID / 観察開始日 / イベント発生日 / 打ち切り日 の4列）
+    sf = mp.build_survival(df, id_col="仮名ID", start_date="観察開始年月日",
+                           event_date="event発生年月日", censor_date="観察打ち切り年月日",
+                           unit="years")
+    print(sf.report())
+
+    # 辞書駆動の掃除
+    clean, rep = mp.clean_numeric(df)
+    rep.show()
+
+    # 透析指標
+    r = mp.percent_cgr(sex="男性", age=60, bun_pre=60, bun_post=20,
+                       cr_pre=12, cr_post=4, bw_pre=63, bw_post=60, td_hours=4)
+"""
+
+from __future__ import annotations
+
+__version__ = "0.1.0"
+__author__ = "Kazuhiro Iwadoh"
+__license__ = "MIT"
+
+from . import clean, dates, hd, survival_input, tac, targets, timing
+from .clean import CleanReport, build_alias_map, clean_numeric, derive, load_dict
+from .dates import DateParseResult, parse_date_frame, parse_date_series
+from .hd import (
+    bmi,
+    clear_space_ratio,
+    clear_space_ratio_estimated,
+    clear_space_ratio_from_weight,
+    corrected_ca,
+    gnri,
+    ideal_body_weight,
+    npcr,
+    percent_cgr,
+    removed_mass_from_effluent,
+    salt_intake,
+    select_weight_for_gnri,
+    sp_ktv,
+    tsat,
+    urr,
+)
+from .survival_input import SurvivalFrame, build_survival
+from .tac import (
+    TACResult,
+    bun_to_urea_mg_dl,
+    bun_to_urea_mmol_l,
+    interdialytic_hours,
+    tac_bun_simple,
+    tac_linear,
+    tac_trapezoid,
+    urea_to_bun_mg_dl,
+)
+from .targets import achievement, describe_target, in_target
+from .timing import POST, PRE, UNKNOWN, TimingSchema, check_requirements, detect_timing
+
+__all__ = [
+    "__version__",
+    # モジュール
+    "clean", "dates", "hd", "survival_input", "tac", "targets", "timing",
+    # 日付
+    "parse_date_series", "parse_date_frame", "DateParseResult",
+    # 生存時間の入力
+    "build_survival", "SurvivalFrame",
+    # 掃除
+    "clean_numeric", "derive", "load_dict", "build_alias_map", "CleanReport",
+    # 採血時点
+    "TimingSchema", "detect_timing", "check_requirements", "PRE", "POST", "UNKNOWN",
+    # 透析指標
+    "urr", "sp_ktv", "npcr", "percent_cgr",
+    "clear_space_ratio", "clear_space_ratio_estimated", "clear_space_ratio_from_weight",
+    "removed_mass_from_effluent", "salt_intake",
+    "bmi", "ideal_body_weight", "gnri", "select_weight_for_gnri", "corrected_ca", "tsat",
+    # TAC
+    "tac_bun_simple", "tac_trapezoid", "tac_linear", "interdialytic_hours",
+    "bun_to_urea_mg_dl", "bun_to_urea_mmol_l", "urea_to_bun_mg_dl", "TACResult",
+    # 管理目標
+    "in_target", "describe_target", "achievement",
+]
