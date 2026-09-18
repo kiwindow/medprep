@@ -46,7 +46,10 @@ from .splitting import split
 from .survival_input import build_survival
 from .textfmt import frame_text
 
-__version_note__ = "Phase 11"
+#: 「解析からは外すのが望ましい」行に付ける印。★行そのものは削除しない。★
+#:   削除すると元データと行数・並びが変わり、症例ごとに axis=1 で結合し直せなくなる。
+EXCLUDE_FLAG = "除外推奨"
+EXCLUDE_REASON = "除外推奨_理由"
 
 
 # ================================================================== 結果
@@ -61,6 +64,8 @@ class PrepResult:
     audit: object = None
     clean_report: object = None
     dates: dict = field(default_factory=dict)      # 列名 -> DateParseResult
+    exclude: pd.Series | None = None               # 行ごとの「外すのが望ましい」印
+    id_col: str | None = None
     missing: object = None
     mcar: pd.DataFrame | None = None
     outliers: object = None
@@ -82,6 +87,11 @@ class PrepResult:
     seconds: float = 0.0
 
     # ------------------------------------------------------------ 近道
+    @property
+    def n_excluded(self) -> int:
+        """印を付けた行の数（★削除はしていない★）。"""
+        return 0 if self.exclude is None else int(self.exclude.sum())
+
     @property
     def pipeline(self):
         """fit 済みの前処理（sklearn 互換）。"""
@@ -120,12 +130,13 @@ class PrepResult:
             row = self.removed[self.removed["種類"] == "行"]
             val = self.removed[self.removed["種類"] == "値"]
             lines.append(
-                f"\n減らしたもの: 列 {len(col)} 本 / 行 {int(row['件数'].sum())} 例 / "
-                f"値 {int(val['件数'].sum())} 個（NaN 化）")
+                f"\n減らしたもの: 列 {len(col)} 本を外した / "
+                f"行 {int(row['件数'].sum())} 例に★印を付けた（削除はしない）/ "
+                f"値 {int(val['件数'].sum())} 個を NaN にした")
             lines.append(frame_text(self.removed))
-            lines.append("（行の削除は段によって効く範囲が違う。"
-                         "『生存時間の形にする』は生存時間解析にだけ効き、"
-                         "モデルに渡す行列には影響しない）")
+            lines.append("★行は 1 つも削除していない。★ 削除すると症例数と並びが変わり、"
+                         "元のデータと症例ごとに axis=1 で結合し直せなくなる。"
+                         f"外すかどうかは '{EXCLUDE_FLAG}' 列を見て人が決めること。")
 
         if self.warnings:
             lines.append(f"\n★人の確認が要る事項 {len(self.warnings)} 件★"
@@ -204,7 +215,7 @@ def autoprep(
         受け渡しには注意すること。要らなければ False。
     """
     t0 = time.time()
-    res = PrepResult()
+    res = PrepResult(id_col=id_col)
     dic = dic or load_dict()
 
     def step(name, ok=True, detail=""):
@@ -296,8 +307,8 @@ def autoprep(
             step("生存時間の形にする", True,
                  f"{len(sf.data)} 例（除外 {len(sf.excluded)} 例）")
             if len(sf.excluded):
-                warn(f"生存時間に変換できず {len(sf.excluded)} 例を除外した"
-                     "（rep.survival.excluded を見ること）")
+                warn(f"生存時間に変換できない症例が {len(sf.excluded)} 例ある"
+                     "（rep.survival.excluded。★行は削除せず印を付ける★）")
             res.notes.append("生存時間の解析（KM・log-rank・Cox）は層2で行う: "
                              "mp.Survival(rep.survival.data, unit='years')")
             return sf
@@ -342,12 +353,16 @@ def autoprep(
     if want_split and outcome:
         dfs = dfc
         if outcome in dfs.columns and dfs[outcome].isna().any():
-            dfs, info = drop_missing_outcome(dfs, outcome)
+            # ★元の表から行を消さない。★ 消すと症例数が変わり、元データと
+            #   axis=1 で結合し直せなくなる。ここで作る部分集合はモデルに渡す分だけ。
+            _, info = drop_missing_outcome(dfs, outcome)
             res.dropped_outcome = info
-            step("目的変数の欠測を除く", True,
-                 f"{info['残り']} 例（判定できない {info['除外']} 例を除外）")
-            warn(f"目的変数 '{outcome}' の欠測 {info['除外']} 例を除外した"
-                 "（★目的変数は補完してはならない★）")
+            dfs = dfs.loc[dfs[outcome].notna()]
+            step("目的変数が欠測の行に印を付ける", True,
+                 f"モデルに渡すのは {info['残り']} 例"
+                 f"（判定できない {info['除外']} 例に印。★削除はしない★）")
+            warn(f"目的変数 '{outcome}' が欠測の {info['除外']} 例に印を付けた"
+                 "（★目的変数は補完してはならない★。行は削除していない）")
             res.schema = Schema.infer(dfs, outcome=outcome, task=task, group=group,
                                       id_col=id_col, survival=survival,
                                       survival_dates=survival_dates, dic=dic)
@@ -372,6 +387,10 @@ def autoprep(
             warn(f"リーク検査で問題: {r['検査']}  {r['内容']}")
     elif want_split:
         step("train / test に分ける", False, "outcome が指定されていない")
+
+    # -------------------------------------------------------- 11.4) 行に印を付ける
+    #   ★行は削除しない。印を付けるだけ。★
+    res.exclude = _mark_excluded(res, dfc, outcome, id_col, step)
 
     # -------------------------------------------------------- 11.5) 減らしたものの記録
     #   ★何を捨てたかを言わない自動化は、信用してはならない。★
@@ -541,7 +560,11 @@ def _save_data(res: PrepResult, p, put) -> None:
         put(os.path.join(d, "掃除済みデータ.xlsx"), _clean_book)
 
         if res.schema is not None:
+            # ★印の 2 列は必ず残す。★ 行を削除していないので、
+            #   どの行を外すのが望ましいかはこの列でしか分からない。
             keep = [c for c in res.schema.kept() if c in res.df_clean.columns]
+            keep += [c for c in (EXCLUDE_FLAG, EXCLUDE_REASON)
+                     if c in res.df_clean.columns and c not in keep]
             put(os.path.join(d, "解析用データ.xlsx"),
                 lambda q: res.df_clean[keep].to_excel(q, index=False))
 
@@ -549,13 +572,24 @@ def _save_data(res: PrepResult, p, put) -> None:
         return
     name = (res.schema.target or {}).get("name") if res.schema else None
 
-    def _with_y(x, y):
-        return x if (y is None or name is None) else x.assign(**{name: y})
+    def _with_meta(x, y):
+        """★元データのどの行かが分かるようにする。★
+
+        train / test は目的変数が欠測の症例を含まないので、行数は元と違う。
+        元の行番号（と ID）を付けておけば、あとから症例ごとに突き合わせられる。
+        """
+        out = x.copy()
+        out.insert(0, "元の行", list(x.index))
+        if res.id_col and res.df_clean is not None and res.id_col in res.df_clean.columns:
+            out.insert(1, res.id_col, res.df_clean.loc[x.index, res.id_col].to_numpy())
+        if y is not None and name:
+            out[name] = y.to_numpy()
+        return out
 
     put(os.path.join(d, "前処理済み_train.xlsx"),
-        lambda q: _with_y(res.X_train, res.y_train).to_excel(q, index=False))
+        lambda q: _with_meta(res.X_train, res.y_train).to_excel(q, index=False))
     put(os.path.join(d, "前処理済み_test.xlsx"),
-        lambda q: _with_y(res.X_test, res.y_test).to_excel(q, index=False))
+        lambda q: _with_meta(res.X_test, res.y_test).to_excel(q, index=False))
 
 
 def _parse_dates(dfc, schema_raw, date_col, survival_dates, step, warn) -> dict:
@@ -607,19 +641,71 @@ def _parse_dates(dfc, schema_raw, date_col, survival_dates, step, warn) -> dict:
     return out
 
 
+def _mark_excluded(res: PrepResult, dfc, outcome, id_col, step) -> pd.Series:
+    """「解析からは外すのが望ましい」行に印を付ける。**その場で dfc に 2 列足す。**
+
+    ★行は削除しない。★
+    削除すると症例数と並びが変わり、**元のデータと症例ごとに axis=1 で結合し直せなくなる。**
+    外すかどうかは人が決めることであって、自動化が黙って決めることではない。
+    """
+    flag = pd.Series(False, index=dfc.index)
+    why = pd.Series("", index=dfc.index, dtype=object)
+
+    def mark(mask, reason):
+        m = mask.reindex(dfc.index, fill_value=False).fillna(False).astype(bool)
+        flag[m] = True
+        why[m] = (why[m] + "／" + reason).str.lstrip("／")
+
+    # --- 目的変数が欠測
+    if outcome and outcome in dfc.columns:
+        mark(dfc[outcome].isna(), f"目的変数 '{outcome}' が欠測")
+
+    # --- 生存時間に変換できない（ID で元の行に戻す）
+    sf = res.survival
+    if sf is not None and len(getattr(sf, "excluded", [])) and id_col \
+            and id_col in dfc.columns and "ID" in sf.excluded.columns:
+        by_id = dict(zip(sf.excluded["ID"].astype(str), sf.excluded["理由"].astype(str)))
+        ids = dfc[id_col].astype(str)
+        for reason in sorted(set(by_id.values())):
+            targets = {k for k, v in by_id.items() if v == reason}
+            mark(ids.isin(targets), f"生存時間: {reason}")
+
+    dfc[EXCLUDE_FLAG] = flag.astype(int)
+    dfc[EXCLUDE_REASON] = why
+
+    # 印の列そのものは特徴量にしない（人が読むための列である）
+    if res.schema is not None:
+        for c in (EXCLUDE_FLAG, EXCLUDE_REASON):
+            if c in res.schema.columns:
+                res.schema.columns[c].action = "drop"
+                res.schema.columns[c].reason = "解析から外す候補の印。特徴量にはしない"
+
+    n = int(flag.sum())
+    step("外すのが望ましい行に印を付ける", True,
+         f"{n} 例に印（★行は削除していない。{len(dfc)} 行のまま★）"
+         if n else f"該当なし（{len(dfc)} 行のまま）")
+    return flag
+
+
 def _removed_table(res: PrepResult, dfc, outcome) -> pd.DataFrame:
-    """**何を、いくつ、なぜ減らしたか**を 1 枚の表にする。
+    """**何を、いくつ、どう扱ったか**を 1 枚の表にする。
 
     全自動の値打ちは「何をしたか」と同じくらい「何を捨てたか」で決まる。
     捨てたものを言わない自動化は、信用してはならない。
+
+    ★行は削除しない。★ 削除すると症例数と並びが変わり、元のデータと
+    症例ごとに axis=1 で結合し直せなくなる。行には印を付けるだけにする。
     """
     rows = []
 
     # --- 列：役割の推定で解析から外したもの
     if res.schema is not None:
         for c in res.schema.dropped():
+            if c in (EXCLUDE_FLAG, EXCLUDE_REASON):
+                continue
             spec = res.schema.columns[c]
             rows.append({"種類": "列", "対象": str(c), "件数": 1,
+                         "処置": "解析から外した（列を削除）",
                          "理由": spec.reason, "段": f"列の役割の推定（{spec.role}）"})
 
         # --- 列：残したが前処理に投入しなかったもの（日付・目的変数・生存時間の 2 列）
@@ -630,35 +716,30 @@ def _removed_table(res: PrepResult, dfc, outcome) -> pd.DataFrame:
                     continue
                 spec = res.schema.columns[c]
                 rows.append({"種類": "列", "対象": str(c), "件数": 1,
+                             "処置": "特徴量にしなかった（列は残る）",
                              "理由": f"役割 {spec.role} は特徴量にしない"
                                    f"（日付・生存時間の列はそのままでは説明変数にならない）",
                              "段": "前処理"})
 
-    # --- 行：目的変数の欠測
-    if res.dropped_outcome:
-        info = res.dropped_outcome
-        if info.get("除外"):
-            rows.append({"種類": "行", "対象": f"目的変数 '{outcome}' が欠測",
-                         "件数": int(info["除外"]),
-                         "理由": str(info.get("理由", "")).splitlines()[0],
-                         "段": "分割の前"})
-
-    # --- 行：生存時間に変換できなかったもの
-    sf = res.survival
-    if sf is not None and len(getattr(sf, "excluded", [])):
-        for reason, n in sf.excluded["理由"].value_counts().items():
-            rows.append({"種類": "行", "対象": "生存時間に変換できない",
-                         "件数": int(n), "理由": str(reason),
-                         "段": "生存時間の形にする"})
+    # --- 行：印を付けただけ（削除していない）
+    if res.exclude is not None and res.exclude.any():
+        why = dfc[EXCLUDE_REASON] if EXCLUDE_REASON in dfc.columns else None
+        if why is not None:
+            for reason, n in why[res.exclude].value_counts().items():
+                rows.append({"種類": "行", "対象": "外すのが望ましい症例",
+                             "件数": int(n),
+                             "処置": f"★印だけ付けた（{EXCLUDE_FLAG}=1。行は削除しない）★",
+                             "理由": str(reason), "段": "印を付ける"})
 
     # --- 値：辞書で掃除して NaN にしたもの（行は消えない。値だけが消える）
     if res.clean_report is not None:
         for col, kind, n, detail in res.clean_report.actions:
             if "NaN" in str(kind) and n:
                 rows.append({"種類": "値", "対象": str(col), "件数": int(n),
+                             "処置": "NaN にした（行は残る）",
                              "理由": f"{kind}（{detail}）", "段": "辞書で掃除"})
 
-    cols = ["種類", "対象", "件数", "理由", "段"]
+    cols = ["種類", "対象", "件数", "処置", "理由", "段"]
     if not rows:
         return pd.DataFrame(columns=cols)
     out = pd.DataFrame(rows, columns=cols)

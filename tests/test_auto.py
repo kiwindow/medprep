@@ -249,7 +249,7 @@ def test_it_records_what_it_removed():
     df["連番"] = range(len(df))                     # 使われない列
     rep = run(df, outcome="転帰", task="classification")
     r = rep.removed
-    assert set(r.columns) == {"種類", "対象", "件数", "理由", "段"}
+    assert set(r.columns) == {"種類", "対象", "件数", "処置", "理由", "段"}
     assert (r["理由"].astype(str).str.len() > 0).all()      # 理由の無い行を作らない
 
     # 列：ID は解析から外れ、その理由が書いてある
@@ -257,9 +257,11 @@ def test_it_records_what_it_removed():
     assert "仮名ID" in set(col["対象"])
     assert "id_col" in col.loc[col["対象"] == "仮名ID", "理由"].iloc[0]
 
-    # 行：目的変数の欠測を除いた数が一致する
+    # 行：目的変数の欠測に**印を付けた**数が一致する（削除はしていない）
     row = r[(r["種類"] == "行")]
     assert int(row["件数"].sum()) == 12
+    assert rep.n_excluded == 12
+    assert len(rep.df_clean) == len(df)
 
 
 def test_removed_is_empty_when_nothing_was_removed():
@@ -305,7 +307,8 @@ def test_the_prepared_file_carries_the_outcome_column(isolated):
     tr = pd.read_excel(os.path.join(rep.run.run, "data", "前処理済み_train.xlsx"))
     assert "転帰" in tr.columns
     assert len(tr) == len(rep.X_train)
-    assert list(tr.columns)[:-1] == list(rep.X_train.columns)
+    # 先頭に「元の行」「仮名ID」、末尾に目的変数。その間が特徴量。
+    assert list(tr.columns)[2:-1] == list(rep.X_train.columns)
 
 
 def test_save_data_can_be_turned_off(isolated):
@@ -400,3 +403,79 @@ def test_the_analysis_file_has_the_dropped_columns_removed(isolated):
     assert "仮名ID" in full.columns          # 人が症例を辿れるように残す
     assert "仮名ID" not in use.columns       # 解析には使わない
     assert len(use) == len(full)             # 行は減らさない
+
+
+# ---------------------------------------------------------------- 行は消さない
+def test_rows_are_marked_not_deleted():
+    """★行を削除すると、元のデータと症例ごとに axis=1 で結合し直せなくなる。★"""
+    df = frame(200)
+    df.loc[df.index[:15], "転帰"] = np.nan
+    rep = run(df, outcome="転帰", task="classification")
+    assert len(rep.df_clean) == len(df)                 # 行数が変わらない
+    assert list(rep.df_clean.index) == list(df.index)   # 並びも変わらない
+    assert rep.n_excluded == 15
+    assert rep.df_clean["除外推奨"].sum() == 15
+
+
+def test_the_mark_carries_its_reason():
+    df = frame(120)
+    df.loc[df.index[:8], "転帰"] = np.nan
+    rep = run(df, outcome="転帰", task="classification")
+    marked = rep.df_clean.loc[rep.df_clean["除外推奨"] == 1, "除外推奨_理由"]
+    assert len(marked) == 8
+    assert marked.str.contains("目的変数").all()
+
+
+def test_the_cleaned_frame_can_be_concatenated_with_the_original():
+    """★これが行を消さない理由そのもの。★"""
+    df = frame(150)
+    df.loc[df.index[:10], "転帰"] = np.nan
+    rep = run(df, outcome="転帰", task="classification")
+    both = pd.concat([df, rep.df_clean[["除外推奨", "除外推奨_理由"]]], axis=1)
+    assert len(both) == len(df)
+    assert both["除外推奨"].notna().all()
+
+
+def test_the_mark_columns_are_not_features():
+    """印は人が読むための列である。特徴量にしてはならない。"""
+    df = frame(150)
+    df.loc[df.index[:10], "転帰"] = np.nan
+    rep = run(df, outcome="転帰", task="classification")
+    assert "除外推奨" not in rep.X_train.columns
+    assert "除外推奨_理由" not in rep.X_train.columns
+
+
+def test_the_model_matrix_still_excludes_the_marked_rows():
+    """モデルには渡せない（目的変数が欠測なので）。そこは部分集合になる。"""
+    df = frame(150)
+    df.loc[df.index[:10], "転帰"] = np.nan
+    rep = run(df, outcome="転帰", task="classification")
+    assert len(rep.X_train) + len(rep.X_test) == 140
+
+
+def test_the_saved_files_keep_every_row(isolated):
+    df = frame(150)
+    df.loc[df.index[:10], "転帰"] = np.nan
+    rep = run(df, outcome="転帰", task="classification", save=True)
+    d = os.path.join(rep.run.run, "data")
+    for name in ("掃除済みデータ.xlsx", "解析用データ.xlsx"):
+        assert len(pd.read_excel(os.path.join(d, name), sheet_name=0)) == 150, name
+    use = pd.read_excel(os.path.join(d, "解析用データ.xlsx"))
+    assert {"除外推奨", "除外推奨_理由"} <= set(use.columns)
+
+
+def test_the_prepared_file_can_be_traced_back_to_the_original_rows(isolated):
+    """train / test は部分集合なので、元の行番号と ID を付けておく。"""
+    rep = run(outcome="転帰", task="classification", save=True)
+    tr = pd.read_excel(os.path.join(rep.run.run, "data", "前処理済み_train.xlsx"))
+    assert list(tr.columns)[:2] == ["元の行", "仮名ID"]
+    assert set(tr["元の行"]) <= set(rep.df_clean.index)
+
+
+def test_removed_says_the_rows_were_only_marked():
+    df = frame(120)
+    df.loc[df.index[:6], "転帰"] = np.nan
+    rep = run(df, outcome="転帰", task="classification")
+    row = rep.removed[rep.removed["種類"] == "行"]
+    assert (row["処置"].str.contains("削除しない")).all()
+    assert "削除していない" in rep.report()

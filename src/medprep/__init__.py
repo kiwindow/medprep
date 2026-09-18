@@ -80,7 +80,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __author__ = "Kazuhiro Iwadoh"
 __license__ = "MIT"
 
@@ -108,7 +108,7 @@ from . import (
     timing,
     viz,
 )
-from .auto import PrepResult, autoprep, quicklook
+from .auto import EXCLUDE_FLAG, EXCLUDE_REASON, PrepResult, autoprep, quicklook
 from .clean import CleanReport, build_alias_map, clean_numeric, derive, load_dict
 from .dates import DateParseResult, parse_date_frame, parse_date_series
 from .describe import (
@@ -182,7 +182,7 @@ from .timing import POST, PRE, UNKNOWN, TimingSchema, check_requirements, detect
 __all__ = [
     "__version__",
     # 層1（全自動 1 行）
-    "autoprep", "quicklook", "PrepResult",
+    "autoprep", "quicklook", "PrepResult", "EXCLUDE_FLAG", "EXCLUDE_REASON",
     # 読み込みと保存先
     "read_any", "new_run", "RunPaths", "RunLog",
     # 表を文字で出す（日本語の幅で桁を揃える）

@@ -197,11 +197,11 @@ def build_report(
         col = int((removed["種類"] == "列").sum())
         row = int(removed.loc[removed["種類"] == "行", "件数"].sum())
         val = int(removed.loc[removed["種類"] == "値", "件数"].sum())
-        s.text(f"<b>列 {col} 本 / 行 {row} 例 / 値 {val} 個（NaN 化）を減らした。</b>"
-               "それぞれ理由を付けてある。", kind="html")
-        s.text("行の削除は段によって効く範囲が違う。"
-               "「生存時間の形にする」で除いた例は生存時間解析にだけ効き、"
-               "モデルに渡す行列には影響しない。", kind="note")
+        s.text(f"<b>列 {col} 本を解析から外し、行 {row} 例に印を付け、"
+               f"値 {val} 個を NaN にした。</b>それぞれ理由を付けてある。", kind="html")
+        s.text("<b>★行は 1 つも削除していない。★</b> 削除すると症例数と並びが変わり、"
+               "元のデータと症例ごとに axis=1 で結合し直せなくなる。"
+               "外すかどうかは <code>除外推奨</code> 列を見て人が決めること。", kind="html")
         s.table(removed, caption="減らしたものの一覧", max_rows=300)
 
     # --- schema
