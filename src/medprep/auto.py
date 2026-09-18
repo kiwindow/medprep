@@ -44,6 +44,7 @@ from .report import build_report
 from .schema import DATETIME, Schema
 from .splitting import split
 from .survival_input import build_survival
+from .tables import gt_tables
 from .textfmt import frame_text
 
 #: 「解析からは外すのが望ましい」行に付ける印。★行そのものは削除しない。★
@@ -69,7 +70,8 @@ class PrepResult:
     missing: object = None
     mcar: pd.DataFrame | None = None
     outliers: object = None
-    table1: object = None
+    table1: object = None                   # TableOneResult（詳細版）
+    gt: object = None                      # GTSummary（論文用の Table 1 / Table 2）
     achievement: pd.DataFrame | None = None
     survival: object = None                # SurvivalFrame（解析は層2でする）
     split: object = None
@@ -345,6 +347,20 @@ def autoprep(
             step("Table 1 を作る", True,
                  f"{len(res.table1.to_frame())} 行" + (f"（{group} 別）" if group else ""))
 
+        # ★論文にそのまま載る形の Table 1 / Table 2。★
+        #   Table 1 = 全症例の背景（p 値は載せない）
+        #   Table 2 = 群間比較（群分けの指定があるときだけ作る）
+        res.gt = optional(
+            "Table 1 / Table 2（論文用）",
+            lambda: gt_tables(dfc, res.schema, group=group,
+                              columns=table1_columns, dic=dic))
+        if res.gt is not None:
+            n2 = len(res.gt.table2.frame_ja) if res.gt.table2 is not None else 0
+            step("Table 1 / Table 2（論文用）", True,
+                 f"Table 1 {len(res.gt.table1.frame_ja)} 行"
+                 + (f" / Table 2 {n2} 行（{group} 別）" if n2
+                    else "（群分けの指定が無いので Table 2 は作らない）"))
+
     # -------------------------------------------------------- 10) 管理目標
     res.achievement = optional(
         "管理目標の達成率", lambda: target_achievement(dfc, by=group, dic=dic))
@@ -471,7 +487,7 @@ def _build_html(res: PrepResult, *, title=None, show_values=False, source="", **
         encoded=res.encoded, run=res.run,
         missing=res.missing,
         outliers=res.outliers,
-        table1=res.table1,
+        table1=res.table1, gt=res.gt,
         comparison=getattr(res.table1, "comparison", None),
         achievement=res.achievement,
         split=res.split,
@@ -518,7 +534,11 @@ def _write_all(res: PrepResult, *, step, t0, save_data=True) -> None:
     if res.html is not None:
         put(p.file("table", "prep_tables.xlsx"), res.html.to_excel)
     if res.table1 is not None:
-        put(p.file("table", "table1.xlsx"), res.table1.to_excel)
+        put(p.file("table", "table1_詳細.xlsx"), res.table1.to_excel)
+    if res.gt is not None:
+        # ★sheet1 = 日本語 / sheet2 = 英語、Word はページを分けて日英。★
+        put(p.file("table", "Table1_2.xlsx"), res.gt.to_excel)
+        put(p.file("table", "Table1_2.docx"), res.gt.to_docx)
     if res.removed is not None:
         put(p.file("table", "除外の記録.xlsx"),
             lambda q: _excel(res.removed, q))

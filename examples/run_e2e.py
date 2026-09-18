@@ -77,7 +77,7 @@ sf = build_survival(
     censor_date="観察打ち切り年月日",
     covariates=["施設", "性別", "年齢", "透析歴_月", "糖尿病",
                 "アルブミン(Alb)", "末梢血｜血色素量(Hb)", "C反応性蛋白(CRP)定量",
-                "無機リン(P)", "補正Ca"],
+                "無機リン(P)", "iCa(mg/dL)"],
     unit="years",
 )
 print(sf.report())
@@ -92,7 +92,7 @@ d["低Alb"] = np.where(d["Alb"] < 3.5, "Alb<3.5", "Alb≥3.5")
 
 # ---------------------------------------------------------------- 7) Table 1
 STEP("7) Table 1（低アルブミン群 vs 非低アルブミン群）")
-cols = ["年齢", "性別", "糖尿病", "vintage", "Hb", "CRP", "P", "補正Ca", "duration", "event"]
+cols = ["年齢", "性別", "糖尿病", "vintage", "Hb", "CRP", "P", "iCa(mg/dL)", "duration", "event"]
 t1 = table_one(d, groupby="低Alb", columns=cols)
 print(t1.report())
 t1.to_excel("table1.xlsx"); t1.to_html("table1.html")
@@ -113,9 +113,9 @@ STEP("8) 管理目標の達成率（開区間と閉区間を区別する）")
 print(target_summary(clean).to_string(index=False))
 ach = target_achievement(clean, by="施設")
 print("\n" + ach.to_string(index=False))
-print("\n  ★境界値ちょうどの行に注目。P 5.5・補正Ca 9.5・Hb 12.0・iPTH 240 は")
+print("\n  ★境界値ちょうどの行に注目。P 5.5・iCa 9.5・Hb 12.0・iPTH 240 は")
 print("    いずれも目標範囲に『含まれない』。<= と < の取り違えが達成率を何％動かすか:")
-for key, col in [("P", "無機リン(P)"), ("cCa", "補正Ca"), ("Hb", "末梢血｜血色素量(Hb)")]:
+for key, col in [("P", "無機リン(P)"), ("cCa", "iCa(mg/dL)"), ("Hb", "末梢血｜血色素量(Hb)")]:
     spec = mp.load_dict()["items"][key]; tg = spec["target"]
     v = pd.to_numeric(clean[col], errors="coerce"); ok = v.notna()
     right = mp.in_target(v, tg)

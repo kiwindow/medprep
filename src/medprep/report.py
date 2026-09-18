@@ -146,6 +146,7 @@ def build_report(
     missing=None,
     outliers=None,
     table1=None,
+    gt=None,
     comparison=None,
     achievement=None,
     survival_summary=None,
@@ -281,8 +282,24 @@ def build_report(
             s.text(f"注記: {n}", kind="note")
 
     # --- 記述統計
+    if gt is not None and gt.tables():
+        s = rep.section("5. Table 1 / Table 2 ―― 論文にそのまま載る形")
+        s.text("<b>Table 1 は全症例の背景、Table 2 は群間比較。</b>"
+               "Table 1 に p 値は載せない（背景を述べる表で検定はしない）。"
+               "群分けの指定が無ければ Table 2 は作らない。<br>"
+               "連続変数は <b>平均値 ± 標準偏差 [最小値, 最大値]</b>、"
+               "離散変数は <b>n (%)</b>。"
+               "<b>検定手法は表の中ではなく脚注に書く</b>"
+               "（行ごとに書くと表が横に伸びて読めなくなる）。<br>"
+               "同じ数値から<b>日本語版と英語版</b>を作ってある。"
+               "Excel（sheet1=日本語 / sheet2=英語）と Word（ページを分けて日英）に"
+               "書き出してあるので、<u>そのまま原稿に貼れる</u>。", kind="html")
+        for t in gt.tables():
+            s.text(t.to_html("ja"), kind="html")
+        for n in gt.notes:
+            s.text(f"注記: {n}", kind="note")
     if table1 is not None:
-        s = rep.section("5. Table 1")
+        s = rep.section("5a. Table 1（詳細版）")
         s.table(table1.table, caption="Table 1", max_rows=300)
         for n in table1.notes:
             s.text(f"注記: {n}", kind="note")

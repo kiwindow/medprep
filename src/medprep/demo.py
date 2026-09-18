@@ -75,6 +75,26 @@ def _fmt(ts, style, rng):
     return str(ts.date())
 
 
+def _hhmm(hours: float, rng) -> str:
+    """小数時間を時刻の文字列にする。**表記ゆれを混ぜる。**
+
+    実務の時刻列は `9:30`・`09:30`・`9時30分`・全角コロンが平気で混ざる。
+    ここで混ぜておかないと、掃除の手順を演習で試せない。
+    """
+    h = int(hours) % 24
+    m = int(round((hours - int(hours)) * 60))
+    if m == 60:
+        h, m = (h + 1) % 24, 0
+    style = rng.integers(0, 10)
+    if style < 6:
+        return f"{h:02d}:{m:02d}"
+    if style < 8:
+        return f"{h}:{m:02d}"
+    if style < 9:
+        return f"{h}時{m:02d}分"
+    return f"{h:02d}：{m:02d}"          # 全角コロン
+
+
 def dialysis_cohort(n: int = 600, seed: int = 20260918) -> pd.DataFrame:
     """演習用の合成透析コホートを作る。
 
@@ -106,6 +126,18 @@ def dialysis_cohort(n: int = 600, seed: int = 20260918) -> pd.DataFrame:
     w_post = dw
 
     td = rng.choice([3.5, 4.0, 4.5, 5.0], n, p=[.15, .60, .20, .05])
+
+    # ★透析時間は列として渡さない。開始時刻と終了時刻から作らせる。★
+    #   実務のデータはたいてい時刻で入っており、時間そのものは入っていない。
+    #   午前・午後・夜間の 3 シフト。表記ゆれ（全角コロン、"9時30分"）も混ぜる。
+    shift = rng.choice([0, 1, 2], n, p=[.50, .30, .20])
+    base_h = np.select([shift == 0, shift == 1], [8.5, 13.0], 17.0)
+    t_start = base_h + rng.choice([0.0, 0.25, 0.5], n)
+    t_end = t_start + td
+
+    # 鉄関連（TSAT を算出させるため）
+    fe = np.clip(rng.normal(58, 24, n), 8, 200).round(0)
+    tibc = np.clip(rng.normal(255, 45, n), 120, 450).round(0)
     urr = np.clip(rng.normal(0.68, 0.07, n), 0.45, 0.85)            # 尿素除去率
     bun_pre = np.clip(rng.normal(62, 15, n), 25, 120).round(0)
     bun_post = (bun_pre * (1 - urr)).round(0)
@@ -145,7 +177,8 @@ def dialysis_cohort(n: int = 600, seed: int = 20260918) -> pd.DataFrame:
         "透析歴_月": vintage,
         "糖尿病": dm,
         "身長": height,
-        "透析時間": td,
+        "透析開始時刻": [_hhmm(x, rng) for x in t_start],
+        "透析終了時刻": [_hhmm(x, rng) for x in t_end],
         "透析前体重": w_pre,
         "透析後体重": w_post,
         "透析前BUN": bun_pre,
@@ -161,6 +194,8 @@ def dialysis_cohort(n: int = 600, seed: int = 20260918) -> pd.DataFrame:
         "カルシウム(Ca)": ca,
         "インタクトPTH(iPTH)": ipth,
         "β2マイクログロブリン(β2MG)": b2mg,
+        "血清鉄(Fe)": fe,
+        "総鉄結合能(TIBC)": tibc,
         # ★測定法変更（JSCC→IFCC）で値がおよそ 1/3 になる。★
         #   病態ではなく測定法の段差であり、audit がこれを検出する。
         "アルカリフォスファターゼ(ALP)": np.where(

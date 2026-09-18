@@ -13,13 +13,37 @@ from medprep import demo
 def test_the_default_cohort_is_reproducible():
     a, b = demo.dialysis_cohort(), demo.dialysis_cohort()
     pd.testing.assert_frame_equal(a, b)
-    assert a.shape == (600, 30)
+    assert a.shape == (600, 33)
 
 
 def test_a_different_seed_gives_a_different_cohort():
     a = demo.dialysis_cohort(seed=1)
     b = demo.dialysis_cohort(seed=2)
     assert not a["年齢"].equals(b["年齢"])
+
+
+def test_dialysis_times_are_given_as_clock_times_not_as_hours():
+    """★透析時間そのものは渡さない。★ 開始時刻と終了時刻から作らせる。
+
+    実務のデータはたいてい時刻で入っており、時間そのものは入っていない。
+    表記ゆれ（`9:00`・`8時45分`・全角コロン）も混ざっているのが普通である。
+    """
+    df = demo.dialysis_cohort()
+    assert "透析開始時刻" in df.columns and "透析終了時刻" in df.columns
+    assert "透析時間" not in df.columns
+    joined = " ".join(map(str, df["透析開始時刻"]))
+    assert "時" in joined or "：" in joined          # 表記ゆれが入っている
+
+    from medprep.clean import derive_dialysis
+    out, _ = derive_dialysis(df)
+    h = out["透析時間(hr)"].dropna()
+    assert len(h) == len(df)
+    assert h.between(3.4, 5.1).all()
+
+
+def test_iron_studies_exist_so_that_tsat_can_be_derived():
+    df = demo.dialysis_cohort()
+    assert "血清鉄(Fe)" in df.columns and "総鉄結合能(TIBC)" in df.columns
 
 
 # ---------------------------------------------------------------- 透析前後

@@ -243,6 +243,7 @@ REQUIREMENTS = {
     "TAC-BUN(時間加重)": [("BUN", PRE), ("BUN", POST), ("BUN_next_pre", None),
                        ("Td", None), ("interdialytic_hours", None)],
     "補正Ca":        [("Ca", None), ("Alb", None)],
+    "iCa(mg/dL)":   [("Ca", None), ("Alb", None)],
     "TSAT":         [("Fe", None), ("TIBC", None)],
     "GNRI":         [("Alb", None), ("weight", None), ("height", None)],
     "BMI":          [("weight", None), ("height", None)],

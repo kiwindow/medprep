@@ -61,7 +61,7 @@ md("""
    　演習② 機械の判断を検分する（`schema` と監査）<br>
    　演習③ 欠損と外れ値 ―― **消してよい場合と消してはいけない場合**<br>
    　演習④ 透析前後の 2 点 ―― 採血時点の対応づけと透析量の指標<br>
-   　演習⑤ Table 1 と群間比較 ―― 検定の自動選択、効果量、p 値の罠<br>
+   　演習⑤ Table 1 / Table 2 ―― そのまま論文に貼れる形（日英・Excel・Word）<br>
    　演習⑥ 生存時間分析 ―― KM → log-rank → Cox → 比例ハザードの確認<br>
    　演習⑦ `schema.yaml` を直して再実行し、モデルに渡す<br>
 
@@ -163,20 +163,22 @@ LOCAL_DATA_PATH = ''
 
 # ----- 列の指定（自分のデータを使うときはここを書き換える） -----
 #   ★ここで指定した役割は、機械の推定より強い。★
+#   ★空にしておくと、4) でデータを読んだあとに**列名の一覧から選ぶ画面**が出る。★
+#   ここに書けばその画面は出ない（書いたほうが強い）。
 ID_COL  = '仮名ID'        # 患者を識別する列。分割のときに同じ患者を両側に入れないために使う
-GROUP   = '施設'          # 群間比較・グループ分割に使う列（無ければ None）
+GROUP   = ''              # 群間比較・グループ分割に使う列。'' なら 4) で選ぶ
 DATE_COL = '検体採取日'    # 測定法変更の段差を調べるための日付列（無ければ None）
 
-# 生存時間：観察開始日 / イベント発生日 / 打ち切り日 の 3 列（無ければ None）
-SURVIVAL_DATES = ('観察開始年月日', 'event発生年月日', '観察打ち切り年月日')
+# 生存時間：観察開始日 / イベント発生日 / 打ち切り日 の 3 列。() なら 4) で選ぶ
+SURVIVAL_DATES = ()
 
-# 目的変数（回帰・分類をするとき）。演習⑦で作るのでここでは None。
+# 目的変数（回帰・分類をするとき）。None なら 4) で選ぶ（skip もできる）
 OUTCOME = None
 TASK    = None            # 'regression' / 'classification' / 'survival'
 
 # ----- 分割 -----
-TEST_SIZE    = 0.25
-RANDOM_STATE = 0
+TEST_SIZE    = 0.2
+RANDOM_STATE = 42
 
 # ----- レポート -----
 #   ★既定では症例レベルの値（仮名 ID など）をレポートに出さない。★
@@ -198,7 +200,7 @@ code("""
 # ★このノートブックが必要とする medprep の版★
 #   古い medprep が入っていると、あとのセルが AttributeError で止まる。
 #   ここで版を確かめて、足りなければ**理由を言って止める**。
-REQUIRED_MEDPREP = (0, 8, 0)
+REQUIRED_MEDPREP = (0, 9, 0)
 
 if IN_COLAB:
     # -U（更新）と --no-cache-dir を付ける。付けないと、同じ版番号のまま
@@ -271,6 +273,8 @@ md("""
 """)
 
 code("""
+import contextlib
+
 import ipywidgets as widgets
 import pandas as pd
 from IPython.display import clear_output, display
@@ -281,6 +285,115 @@ os.makedirs(DATA_DIR, exist_ok=True)
 df = None          # ★ここに読み込んだデータが入る。ボタンを押すまでは空。★
 data_path = None
 _out = widgets.Output()
+
+
+# ---------------------------------------------------------------- 列を選ぶ
+#   ★環境変数に書いてあればそれが最優先。★ 空のときだけここが出る。
+#   列名をすべて並べ、クリックで選ぶ。skip もできる。
+_NONE = '（指定しない / skip）'
+
+
+def _guess(cols, *words):
+    # 列名に手がかりの語を含むものを探す。★見つからなければ選ばない★
+    for w in words:
+        for c in cols:
+            if w in str(c):
+                return c
+    return _NONE
+
+
+def _suggest_task(s):
+    # 目的変数の見た目から回帰か分類かを提案する。★決めつけない。提案である★
+    if s is None:
+        return _NONE
+    v = s.dropna()
+    if v.empty:
+        return _NONE
+    if not pd.api.types.is_numeric_dtype(v) or v.nunique() <= 10:
+        return 'classification'
+    return 'regression'
+
+
+def _ask_settings(d, auto=False):
+    global GROUP, OUTCOME, TASK, SURVIVAL_DATES
+    cols = list(d.columns)
+    need_g = not GROUP
+    need_o = not OUTCOME
+    need_s = not SURVIVAL_DATES
+    if not (need_g or need_o or need_s):
+        print('◇ 群分け・目的変数・生存時間の列は環境変数で指定済み。選択画面は出さない。')
+        return
+
+    print('')
+    print('─' * 70)
+    print('◇ この表の列（この中から選ぶ）')
+    for i in range(0, len(cols), 3):
+        print('   ' + '  '.join(f'{j + 1:2d}. {cols[j]:<24s}' for j in range(i, min(i + 3, len(cols)))))
+    print('─' * 70)
+
+    opts = [_NONE] + cols
+    w_g = widgets.Dropdown(options=opts, value=_guess(cols, '施設', '群', '病院', 'group'),
+                           description='GROUP', layout=widgets.Layout(width='420px'))
+    w_o = widgets.Dropdown(options=opts, value=_NONE,
+                           description='OUTCOME', layout=widgets.Layout(width='420px'))
+    w_t = widgets.Dropdown(options=[_NONE, 'regression', 'classification', 'survival'],
+                           value=_NONE, description='TASK',
+                           layout=widgets.Layout(width='420px'))
+    w_s1 = widgets.Dropdown(options=opts, value=_guess(cols, '観察開始', '開始年月日', '登録日'),
+                            description='観察開始日', layout=widgets.Layout(width='420px'))
+    w_s2 = widgets.Dropdown(options=opts, value=_guess(cols, 'event発生', 'イベント', '発生年月日'),
+                            description='イベント日', layout=widgets.Layout(width='420px'))
+    w_s3 = widgets.Dropdown(options=opts, value=_guess(cols, '打ち切り', '打切', '最終観察'),
+                            description='打ち切り日', layout=widgets.Layout(width='420px'))
+
+    def _on_outcome(change):
+        if w_t.value == _NONE and change['new'] != _NONE:
+            w_t.value = _suggest_task(d[change['new']])
+    w_o.observe(_on_outcome, names='value')
+
+    box, out2 = [], widgets.Output()
+
+    def _apply(_=None, skip=False, quiet=False):
+        global GROUP, OUTCOME, TASK, SURVIVAL_DATES
+        with (contextlib.nullcontext() if quiet else out2):
+            if not quiet:
+                clear_output()
+            if not skip:
+                if need_g and w_g.value != _NONE:
+                    GROUP = w_g.value
+                if need_o and w_o.value != _NONE:
+                    OUTCOME = w_o.value
+                if need_o and w_t.value != _NONE:
+                    TASK = w_t.value
+                trio = (w_s1.value, w_s2.value, w_s3.value)
+                if need_s and all(x != _NONE for x in trio):
+                    SURVIVAL_DATES = trio
+            print(f'◇ GROUP          = {GROUP or "（指定なし）"}'
+                  '   ← 指定があれば Table 2（群間比較）を作る')
+            print(f'◇ OUTCOME / TASK = {OUTCOME or "（指定なし）"} / {TASK or "（指定なし）"}')
+            print(f'◇ SURVIVAL_DATES = {SURVIVAL_DATES or "（指定なし）"}')
+            print('')
+            print('★ここで選ばなくても先へ進める。★ 演習①は群分け無しで走り、'
+                  'Table 1 だけが作られる。')
+
+    if need_g:
+        box.append(w_g)
+    if need_o:
+        box += [w_o, w_t]
+    if need_s:
+        box += [w_s1, w_s2, w_s3]
+
+    if auto:
+        # 自動実行（LOCAL_DATA_PATH を書いたとき・D&Dアプリ）は待たずに当てはめる
+        _apply(quiet=True)
+        return
+    b_ok = widgets.Button(description='この指定で進む', button_style='primary',
+                          icon='check', layout=widgets.Layout(width='200px', height='38px'))
+    b_no = widgets.Button(description='指定しない（skip）', icon='forward',
+                          layout=widgets.Layout(width='200px', height='38px'))
+    b_ok.on_click(_apply)
+    b_no.on_click(lambda _: _apply(skip=True))
+    display(widgets.VBox(box), widgets.HBox([b_ok, b_no]), out2)
 
 
 def _load(path):
@@ -297,6 +410,7 @@ def _load(path):
     print(f'◇ {df.shape[0]} 行 × {df.shape[1]} 列 を読み込んだ')
     print(f'   {path}')
     display(df.head())
+    _ask_settings(df, auto=bool(LOCAL_DATA_PATH))
 
 
 def _use_demo(_=None):
@@ -385,9 +499,9 @@ if df is None:
 
 rep = mp.autoprep(
     df,
-    group=GROUP, id_col=ID_COL, date_col=DATE_COL,
-    survival_dates=SURVIVAL_DATES,
-    outcome=OUTCOME, task=TASK,
+    group=GROUP or None, id_col=ID_COL, date_col=DATE_COL,
+    survival_dates=SURVIVAL_DATES or None,
+    outcome=OUTCOME or None, task=TASK or None,
     test_size=TEST_SIZE, seed=RANDOM_STATE,
     show_values=SHOW_VALUES,
     save=True, method=PROJECT_NAME,      # run{N}/ に全出力を保存する
@@ -730,9 +844,25 @@ print(mp.frame_text(
 """)
 
 md("""
-### 透析量の指標を出す
+### 透析量の指標は**掃除の段で自動的に作られる**
 
-`urr` と `sp_ktv` は **透析前 > 透析後** を前提にしている。
+揃っている列の組についてだけ、次の列が作られる（★揃っていなければ作らない★）。
+
+| 作る列 | 要る列 | 式 |
+|---|---|---|
+| `除水量(kg)` | 透析前体重・透析後体重 | 前 − 後 |
+| `URR(%)` | 透析前BUN・透析後BUN | (前 − 後) / 前 × 100 |
+| `透析時間(hr)` | 透析開始時刻・透析終了時刻 | 終了 − 開始（日またぎは +24h） |
+| `spKt/V` | 前後BUN・除水量・透析後体重・透析時間 | Daugirdas 第2世代式 |
+| `TSAT(%)` | Fe・TIBC | Fe / TIBC × 100 |
+| `iCa(mg/dL)` | Ca・Alb | Ca + (4 − Alb) |
+
+spKt/V = −ln(R − 0.008t) + (4 − 3.5R)·UF/W
+（R = 透析後BUN/透析前BUN、t = 透析時間[hr]、**UF = 除水量[L]**、W = 透析後体重[kg]）
+
+★UF は L で入れる。★ mL で入れると 1000 倍になり、Kt/V が 2000 になる。
+水 1 L = 1 kg なので、`除水量(kg)` の数値をそのまま L として使ってよい。
+
 前後が逆の症例では URR が負になる。**NaN にして黙って埋めたりはしない。**
 値が出ないことを見せるのが正しい。
 """)
@@ -740,21 +870,96 @@ md("""
 code("""
 d = rep.df_clean
 urr = mp.urr(bun_pre=d['透析前BUN'], bun_post=d['透析後BUN'])
-ktv = mp.sp_ktv(bun_pre=d['透析前BUN'], bun_post=d['透析後BUN'],
-                bw_pre=d['透析前体重'], bw_post=d['透析後体重'],
-                td_hours=d['透析時間'])
-
-out = pd.DataFrame({'施設': d['施設'], 'URR': urr, 'spKt/V': ktv})
-print(mp.frame_text(out.groupby('施設').agg(['mean', 'min']).round(3).reset_index()))
+# ★medprep は同じ指標を掃除の段で自動的に作っている（列名に単位が付く）★
+out = d[['施設', '透析時間(hr)', '除水量(kg)', 'URR(%)', 'spKt/V', 'TSAT(%)', 'iCa(mg/dL)']]
+print(mp.frame_text(out.groupby('施設').mean(numeric_only=True).round(2).reset_index()))
 print()
-print(f'URR が負になった症例: {int((urr < 0).sum())} 例  ★前後が逆の施設に偏っている★')
+print(f"URR が負になった症例: {int((d['URR(%)'] < 0).sum())} 例"
+      '  ★前後が逆の施設に偏っている★')
+
+# 手で計算しても同じになることを確かめる
+urr = mp.urr(bun_pre=d['透析前BUN'], bun_post=d['透析後BUN'])
+print('自動生成の URR(%) と mp.urr() の最大差:',
+      float((pd.Series(urr, index=d.index) - d['URR(%)']).abs().max()))
 """)
 
 # ================================================================= 演習5
 md("""
-# ◆ 6. 演習⑤ Table 1 と群間比較
+# ◆ 6. 演習⑤ Table 1 / Table 2 ―― **そのまま論文に貼れる形**
 
-検定は自動で選ぶ。ただし**選んだ理由と効果量を必ず添える。**
+**表は 2 枚に分ける。** 読む側の目的が違うからである。
+
+| | 中身 | p 値 |
+|---|---|---|
+| **Table 1** | 全症例の背景（N と分布だけ） | ★載せない★ |
+| **Table 2** | 全体 + 群ごと + 群間比較 | 右端に 1 列 |
+
+`GROUP` の指定が無ければ **Table 1 だけ**が作られる。
+
+### 書式
+
+```
+連続変数    平均値 ± 標準偏差 [最小値, 最大値]
+離散変数    n (%)
+p 値        右端の 1 列だけ。★検定手法は表の中に書かず、脚注に回す★
+```
+
+検定手法を行ごとに書くと表が横に伸びて読めなくなる。しかし
+**どの検定を使ったかを書かない表は査読に通らない**ので、脚注に必ず出す。
+
+同じ数値から**日本語版と英語版**を作ってある。
+人が訳し直すと、そこで誤訳と写し間違いが入るからである。
+""")
+
+md("""
+### 下の表は **そのまま選んでコピーし、Word に貼れる**
+
+Word に貼ると**表として**入る（文字の塊ではない）。配置は中詰め。
+ここに出すのは日本語版だけ。英語版は Excel と Word のファイルに入っている。
+""")
+
+code("""
+from IPython.display import HTML
+
+# ★Word にそのまま貼れる形で出す（選択してコピー → Word に貼る）★
+display(HTML(rep.gt.to_html('ja')))
+""")
+
+code("""
+# 文字だけで見たいとき（桁が揃う）
+print(rep.gt.table1.text('ja'))
+""")
+
+code("""
+if rep.gt.table2 is not None:
+    print(rep.gt.table2.text('ja'))
+else:
+    print('GROUP の指定が無いので Table 2 は作られていない。')
+    print('「1. 環境構築 → 4) データの入力」でもう一度読み込み、GROUP を選ぶこと。')
+""")
+
+md("""
+### 書き出されたファイル
+
+| ファイル | 中身 |
+|---|---|
+| `table/Table1_2.xlsx` | **sheet1 = 日本語版 / sheet2 = 英語版** |
+| `table/Table1_2.docx` | **ページを分けて日本語版 → 英語版**（表は中詰め・三本罫線） |
+
+Word のほうは、群が多くて横に伸びる表だけ**自動で横置きページ**になる。
+""")
+
+code("""
+for f in rep.saved:
+    if 'Table1_2' in f:
+        print(' ', f)
+""")
+
+md("""
+## 検定の中身を確かめる（詳細版）
+
+Table 2 には p 値しか出ていない。**なぜその検定を選んだか**と効果量は、
+こちらの詳細版に入っている。査読で聞かれるのはこの中身である。
 """)
 
 code("""
@@ -788,7 +993,7 @@ rep.achievement
 code("""
 # 境界値ちょうどの症例が何例あるか。ここが取り違えの影響を受ける。
 clean = rep.df_clean
-for key, col in [('P', '無機リン(P)'), ('cCa', '補正Ca'), ('Hb', '末梢血｜血色素量(Hb)')]:
+for key, col in [('P', '無機リン(P)'), ('cCa', 'iCa(mg/dL)'), ('Hb', '末梢血｜血色素量(Hb)')]:
     if col not in clean.columns:
         continue
     spec = mp.load_dict()['items'][key]
@@ -1087,7 +1292,7 @@ nb = {
     "nbformat": 4,
     "nbformat_minor": 0,
 }
-VERSION = "Ver1_7"
+VERSION = "Ver1_8"
 out = str(pathlib.Path(__file__).resolve().parent / f"Preprocessing_{VERSION}.ipynb")
 with open(out, "w", encoding="utf-8") as f:
     json.dump(nb, f, ensure_ascii=False, indent=1)

@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import datetime
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -236,6 +237,203 @@ def clean_numeric(
     return out, rep
 
 
+# ======================================================== 透析関連の派生指標
+_TIME_RE = re.compile(r"^\s*(\d{1,2})\s*[:：時]\s*(\d{1,2})\s*分?\s*$")
+
+#: 派生指標の列名。★単位を列名に書く。★ 単位の無い数値は必ずどこかで誤読される。
+UF_COL, URR_COL, TD_COL = "除水量(kg)", "URR(%)", "透析時間(hr)"
+KTV_COL, TSAT_COL, ICA_COL = "spKt/V", "TSAT(%)", "iCa(mg/dL)"
+ICAP_COL = "iCa×P"
+
+
+def to_hours(v) -> float:
+    """時刻を「0 時からの時間」に直す。読めなければ NaN。
+
+    実務の時刻列は `9:30`・`09:30`・`9時30分`・全角コロン・Excel のシリアル小数
+    （0.395833… = 9:30）が平気で混ざる。**読めないものを 0 にはしない。**
+    """
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return float("nan")
+    if isinstance(v, (pd.Timestamp, datetime.datetime)):
+        return v.hour + v.minute / 60 + v.second / 3600
+    if isinstance(v, datetime.time):
+        return v.hour + v.minute / 60 + v.second / 3600
+    if isinstance(v, (int, float, np.integer, np.floating)):
+        x = float(v)
+        if 0.0 <= x < 1.0:                      # Excel のシリアル小数
+            return x * 24
+        return x if 0 <= x < 24 else float("nan")
+    m = _TIME_RE.match(unicodedata.normalize("NFKC", str(v)))
+    if not m:
+        return float("nan")
+    h, mi = int(m.group(1)), int(m.group(2))
+    return h + mi / 60 if (0 <= h < 24 and 0 <= mi < 60) else float("nan")
+
+
+def session_hours(start, end) -> pd.Series:
+    """開始時刻と終了時刻から透析時間（hr）を作る。
+
+    ★日をまたぐ夜間透析がある。★ 終了が開始より早いときは翌日とみなして 24 を足す。
+    24 時間を超える値は入力ミスなので NaN にする（**勝手に丸めない**）。
+    """
+    a = pd.Series([to_hours(v) for v in start], index=getattr(start, "index", None))
+    b = pd.Series([to_hours(v) for v in end], index=getattr(end, "index", None))
+    h = b - a
+    h = h.mask(h < 0, h + 24)
+    return h.mask((h <= 0) | (h > 12))
+
+
+def _timing_of(col: str) -> str:
+    from .timing import detect_timing
+    return detect_timing(col)[0]
+
+
+def _pick(df, amap, key, timing=None):
+    """辞書キー `key` に一致する列を選ぶ。`timing` を指定すればその時点のものだけ。
+
+    時点つきが見つからないときは**時点不詳の列で代用し、注記を残す**。
+    """
+    from .timing import detect_timing
+    exact, plain = None, None
+    for c in df.columns:
+        t, base = detect_timing(c)
+        k = amap.get(_norm(base)) or amap.get(_norm(c))
+        if k != key:
+            continue
+        if timing is not None and t == timing and exact is None:
+            exact = c
+        elif t == "unknown" and plain is None:
+            plain = c
+    if timing is None:
+        return plain or exact, False
+    return (exact, False) if exact else (plain, plain is not None)
+
+
+def _time_col(df, *words):
+    for c in df.columns:
+        nc = _norm(c)
+        if all(w in nc for w in words):
+            return c
+    return None
+
+
+def derive_dialysis(df: pd.DataFrame, dic: dict | None = None) -> tuple[pd.DataFrame, list]:
+    """透析の指標を、**入力が揃っている列の組についてだけ**作る。
+
+    | 作る列 | 要る列 | 式 |
+    |---|---|---|
+    | `除水量(kg)` | 透析前体重・透析後体重 | 前 − 後 |
+    | `URR(%)` | 透析前BUN・透析後BUN | (前 − 後) / 前 × 100 |
+    | `透析時間(hr)` | 透析開始時刻・透析終了時刻 | 終了 − 開始（日またぎは +24h） |
+    | `spKt/V` | 前後BUN・除水量・透析後体重・透析時間 | Daugirdas 第2世代式 |
+    | `TSAT(%)` | Fe・TIBC | Fe / TIBC × 100 |
+    | `iCa(mg/dL)` | Ca・Alb | Ca + (4 − Alb) |
+
+    ★揃っていない組は作らない。★ 片方だけで推測した値を入れると、
+    それが計算値なのか実測値なのか、あとから誰にも分からなくなる。
+    既に同じ名前の列があるときも作らない（人が入れた値を上書きしない）。
+    """
+    dic = dic or load_dict()
+    amap = build_alias_map(dic)
+    out, notes = df.copy(), []
+
+    def borrowed(name, col, flag):
+        if flag:
+            notes.append(f"{name}: 採血時点の書かれていない列 '{col}' を使った。"
+                         "★時点が違えば値の意味も違う。列名に透析前/透析後を書くこと★")
+
+    # ---- 1) 透析時間（★他の指標がこれに依存するので最初に作る★）
+    c_start = _time_col(out, "開始", "時") or _time_col(out, "start", "time")
+    c_end = _time_col(out, "終了", "時") or _time_col(out, "end", "time")
+    if c_start and c_end and TD_COL not in out.columns:
+        h = session_hours(out[c_start], out[c_end])
+        out[TD_COL] = h.round(2)
+        bad = int(h.isna().sum() - (out[c_start].isna() | out[c_end].isna()).sum())
+        notes.append(f"{TD_COL} を '{c_start}' と '{c_end}' から算出した"
+                     + (f"（読めない/あり得ない時刻が {bad} 件あり NaN にした）" if bad > 0 else ""))
+
+    # ---- 2) 除水量
+    w_pre, f1 = _pick(out, amap, "weight", "pre")
+    w_post, f2 = _pick(out, amap, "weight", "post")
+    if w_pre and w_post and w_pre != w_post and UF_COL not in out.columns:
+        uf = pd.to_numeric(out[w_pre], errors="coerce") - pd.to_numeric(out[w_post], errors="coerce")
+        out[UF_COL] = uf.round(2)
+        borrowed(UF_COL, w_pre, f1)
+        borrowed(UF_COL, w_post, f2)
+        neg = int((uf < 0).sum())
+        notes.append(f"{UF_COL} = 透析前体重 − 透析後体重 を算出した"
+                     + (f"（負が {neg} 件 — 前後が入れ替わっている疑い）" if neg else ""))
+
+    # ---- 3) URR
+    b_pre, f1 = _pick(out, amap, "BUN", "pre")
+    b_post, f2 = _pick(out, amap, "BUN", "post")
+    if b_pre and b_post and b_pre != b_post and URR_COL not in out.columns:
+        pre = pd.to_numeric(out[b_pre], errors="coerce")
+        post = pd.to_numeric(out[b_post], errors="coerce")
+        urr_ = (pre - post) / pre.replace(0, np.nan) * 100
+        out[URR_COL] = urr_.round(2)
+        borrowed(URR_COL, b_pre, f1)
+        borrowed(URR_COL, b_post, f2)
+        neg = int((urr_ < 0).sum())
+        notes.append(f"{URR_COL} = (透析前BUN − 透析後BUN)/透析前BUN×100 を算出した"
+                     + (f"（負が {neg} 件 — 透析後のほうが高い。前後が逆の疑い）" if neg else ""))
+
+    # ---- 4) spKt/V（Daugirdas 第2世代式）
+    td_col = TD_COL if TD_COL in out.columns else (_pick(out, amap, "Td")[0])
+    if (b_pre and b_post and UF_COL in out.columns and w_post and td_col
+            and KTV_COL not in out.columns):
+        pre = pd.to_numeric(out[b_pre], errors="coerce")
+        post = pd.to_numeric(out[b_post], errors="coerce")
+        t = pd.to_numeric(out[td_col], errors="coerce")
+        uf = pd.to_numeric(out[UF_COL], errors="coerce")          # ★L（= kg）★
+        w = pd.to_numeric(out[w_post], errors="coerce")
+        r = (post / pre.replace(0, np.nan))
+        inner = r - 0.008 * t
+        # ★log の中が 0 以下なら計算できない。★ 黙って埋めない。NaN にする。
+        ktv = -np.log(inner.where(inner > 0)) + (4 - 3.5 * r) * uf / w.replace(0, np.nan)
+        out[KTV_COL] = ktv.round(3)
+        n_bad = int(ktv.isna().sum() - (pre.isna() | post.isna() | t.isna()
+                                        | uf.isna() | w.isna()).sum())
+        notes.append(
+            "spKt/V を Daugirdas 第2世代式で算出した "
+            "（spKt/V = −ln(R − 0.008t) + (4 − 3.5R)·UF/W、R=透析後BUN/透析前BUN、"
+            "t=透析時間[hr]、★UF=除水量[L]★、W=透析後体重[kg]）"
+            + (f"。算出できなかった例が {n_bad} 件（R − 0.008t ≦ 0）" if n_bad > 0 else ""))
+
+    # ---- 5) TSAT
+    fe, _ = _pick(out, amap, "Fe")
+    tibc, _ = _pick(out, amap, "TIBC")
+    have_tsat = (_pick(out, amap, "TSAT")[0] is not None) or (TSAT_COL in out.columns)
+    if fe and tibc and not have_tsat:
+        v = (pd.to_numeric(out[fe], errors="coerce")
+             / pd.to_numeric(out[tibc], errors="coerce").replace(0, np.nan) * 100)
+        out[TSAT_COL] = v.round(2)
+        bad = int((v > 100).sum())
+        notes.append(f"{TSAT_COL} = Fe/TIBC×100 を算出した"
+                     + (f"（100% 超が {bad} 件 — Fe>TIBC は入力ミス）" if bad else ""))
+
+    # ---- 6) iCa（補正カルシウム）
+    ca, f1 = _pick(out, amap, "Ca", "pre")
+    alb, f2 = _pick(out, amap, "Alb", "pre")
+    if ca and alb and ICA_COL not in out.columns:
+        c = pd.to_numeric(out[ca], errors="coerce")
+        a = pd.to_numeric(out[alb], errors="coerce")
+        # ★Alb が欠測なら算出不能。★ Ca をそのまま入れると、補正されていない値が
+        #   補正Ca として黙って混ざり、管理目標の達成率も回帰係数も静かにずれる。
+        out[ICA_COL] = (c + (4.0 - a)).round(2)
+        borrowed(ICA_COL, ca, f1)
+        borrowed(ICA_COL, alb, f2)
+        n_unknown = int((a.isna() & c.notna()).sum())
+        notes.append(f"{ICA_COL} = Ca + (4 − Alb) を算出した"
+                     + (f"。Alb が欠測の {n_unknown} 例は算出不能として NaN にした"
+                        if n_unknown else ""))
+    ph, _ = _pick(out, amap, "P")
+    if ICA_COL in out.columns and ph and ICAP_COL not in out.columns:
+        out[ICAP_COL] = (out[ICA_COL] * pd.to_numeric(out[ph], errors="coerce")).round(2)
+        notes.append(f"{ICAP_COL} = {ICA_COL} × P を算出した")
+    return out, notes
+
+
 def derive(df: pd.DataFrame, dic: dict | None = None) -> tuple[pd.DataFrame, list]:
     """辞書に formula を持つ派生指標のうち、入力が揃っているものを計算する。"""
     dic = dic or load_dict()
@@ -250,25 +448,14 @@ def derive(df: pd.DataFrame, dic: dict | None = None) -> tuple[pd.DataFrame, lis
     def has(*keys):
         return all(k in col_of for k in keys)
 
-    if has("Ca", "Alb") and "cCa" not in col_of:
-        ca, alb = out[col_of["Ca"]], out[col_of["Alb"]]
-        # ★Alb が欠測なら補正Ca は「算出不能」であって Ca ではない。★
-        #   np.where(np.nan < 4.0, ...) は False に落ちるので、そのまま書くと
-        #   **補正されていない Ca が補正Ca として黙って混ざる**。
-        #   達成率も回帰係数も、その分だけ静かにずれる。
-        cca = np.where(alb < 4.0, ca + (4.0 - alb), ca)
-        n_unknown = int(alb.isna().sum())
-        out["補正Ca"] = pd.Series(cca, index=out.index).mask(alb.isna() | ca.isna())
-        notes.append("補正Ca を Payne 式で算出した（Alb<4.0 のとき Ca+(4.0-Alb)）"
-                     + (f"。Alb が欠測の {n_unknown} 例は算出不能として NaN にした"
-                        if n_unknown else ""))
-        col_of["cCa"] = "補正Ca"
-    if has("cCa", "P"):
-        out["補正Ca×P"] = out[col_of["cCa"]] * out[col_of["P"]]
-        notes.append("補正Ca×P を算出した")
-    if has("Fe", "TIBC"):
-        out["TSAT"] = out[col_of["Fe"]] / out[col_of["TIBC"]] * 100
-        bad = (out["TSAT"] > 100).sum()
-        notes.append("TSAT = Fe/TIBC×100 を算出した"
-                     + (f"（100%超が {bad} 件 — Fe>TIBC は入力ミス）" if bad else ""))
+    if has("BMI") is False and has("height", "weight") and "BMI" not in col_of:
+        h = pd.to_numeric(out[col_of["height"]], errors="coerce") / 100
+        w = pd.to_numeric(out[col_of["weight"]], errors="coerce")
+        out["BMI"] = (w / (h ** 2)).round(2)
+        notes.append("BMI = 体重 / 身長(m)² を算出した")
+
+    # ★透析まわりの派生指標はここに一本化してある。★
+    #   補正Ca（iCa）・TSAT もここで作る。式と単位は derive_dialysis の表を見ること。
+    out, more = derive_dialysis(out, dic)
+    notes += more
     return out, notes

@@ -110,7 +110,7 @@ items:
 
   Td:
     name_ja: 透析時間
-    aliases: [透析時間, Td, 治療時間, "透析時間(時間)", "透析時間(分)", HD時間, dialysis time]
+    aliases: [透析時間, Td, 治療時間, "透析時間(時間)", "透析時間(分)", "透析時間(hr)", HD時間, dialysis time]
     unit: 時間
     unit_variants: {分: 0.0166666667}
     plausible: [0.5, 24]
@@ -120,13 +120,35 @@ items:
 
   weight_gain:
     name_ja: 透析間体重増加
-    aliases: [透析間体重増加, 体重増加, IDWG, 増加量, "透析間体重増加(kg)", 除水量]
+    aliases: [透析間体重増加, 体重増加, IDWG, 増加量, "透析間体重増加(kg)"]
     unit: kg
     plausible: [-5, 15]
     note: |
       次回透析前体重 − 今回透析後体重。推定食塩摂取量の入力。
       機器表示の総除水量とは一致しないことがある（飲水・食事・不感蒸泄のため）。
       負値（体重減少）もありうるので plausible の下限は負にしてある。
+
+  UF:
+    name_ja: 除水量
+    aliases: [除水量, "除水量(kg)", 除水量(L), UF, UFV, 総除水量, ultrafiltration]
+    unit: kg
+    plausible: [-2, 10]
+    note: |
+      透析前体重 − 透析後体重。★L と kg は 1:1 として扱う（水 1 L = 1 kg）★
+      spKt/V の UF はこの値を L として入れる。ml で入れると 1000 倍になる。
+      負値は前後の取り違えを疑う。
+
+  URR:
+    name_ja: 尿素除去率
+    aliases: [URR, "URR(%)", 尿素除去率, urea reduction ratio]
+    unit: "%"
+    # ★下限をわざと広く取ってある。★ 前後が入れ替わっていると URR は大きく負になる。
+    #   ここで NaN にしてしまうと「入れ替わっている」という一番大事な合図が消える。
+    plausible: [-1000, 100]
+    reference: [65, 100]
+    note: |
+      (透析前BUN − 透析後BUN) / 透析前BUN × 100。
+      負値は透析後のほうが高いことを意味し、生理学的にあり得ない。前後が逆である。
 
   interdialytic_days:
     name_ja: 透析間隔日数
@@ -180,7 +202,7 @@ items:
 
   KtV:
     name_ja: Kt/V
-    aliases: ["Kt/V", KtV, "spKt/V", "eKt/V", ktv]
+    aliases: ["Kt/V", KtV, "spKt/V", "eKt/V", ktv, "spKtV"]
     unit: index
     plausible: [0.1, 5.0]
     derived: true
@@ -790,7 +812,7 @@ items:
 
   cCa:
     name_ja: 補正Ca
-    aliases: [補正Ca, 補正カルシウム, corrected Ca, cCa, 補正Ｃａ]
+    aliases: [補正Ca, 補正カルシウム, corrected Ca, cCa, 補正Ｃａ, iCa, "iCa(mg/dL)", 補正カルシウム(iCa)]
     unit: mg/dL
     plausible: [3, 20]
     derived: true
@@ -810,7 +832,7 @@ items:
 
   cCaxP:
     name_ja: 補正Ca × P
-    aliases: [補正Ca×P, 補正CaxP, CaxP, Ca×P, カルシウムリン積]
+    aliases: [補正Ca×P, 補正CaxP, CaxP, Ca×P, カルシウムリン積, iCa×P, iCaxP]
     unit: mg²/dL²
     plausible: [5, 300]
     derived: true
@@ -824,7 +846,7 @@ items:
 
   TSAT:
     name_ja: トランスフェリン飽和度
-    aliases: [TSAT, トランスフェリン飽和度, Tsat, 鉄飽和度]
+    aliases: ["TSAT(%)", TSAT, トランスフェリン飽和度, Tsat, 鉄飽和度]
     unit: "%"
     plausible: [0, 100]
     reference: [20, 50]
