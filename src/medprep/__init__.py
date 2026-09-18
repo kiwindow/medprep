@@ -80,7 +80,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __author__ = "Kazuhiro Iwadoh"
 __license__ = "MIT"
 
@@ -146,6 +146,7 @@ from .outliers import NanSafeWinsorizer, OutlierReport
 from .outliers import detect as detect_outliers
 from .paths import RunLog, RunPaths, new_run
 from .pipeline import (
+    BinaryMapper,
     LeakageError,
     Prepared,
     Preprocessor,
@@ -155,7 +156,7 @@ from .pipeline import (
 )
 from .quality import AuditReport, Finding, audit, method_change_steps
 from .report import Report, build_report
-from .schema import ColumnSpec, Schema, infer_column
+from .schema import ColumnSpec, Schema, binary_output_name, infer_column
 from .splitting import SplitResult, cv_splitter, fold_summary, mark_as, split
 from .survival import (
     CoxResult,
@@ -193,7 +194,8 @@ __all__ = [
     "paths", "pipeline", "quality", "report", "schema", "splitting", "survival",
     "survival_input", "tac", "targets", "textfmt", "timing", "viz",
     # 列の役割とデータ品質監査
-    "Schema", "ColumnSpec", "infer_column",
+    "Schema", "ColumnSpec", "infer_column", "binary_output_name",
+    "BinaryMapper",
     "audit", "AuditReport", "Finding", "method_change_steps",
     # 日付
     "parse_date_series", "parse_date_frame", "DateParseResult",

@@ -58,6 +58,8 @@ from .schema import (
     NUMERIC,
     ORDINAL,
     Schema,
+    _norm,
+    binary_output_name,
 )
 from .splitting import TEST, TRAIN, split_kind
 
@@ -106,6 +108,55 @@ class RenameFeatures(BaseEstimator, TransformerMixin):
         return np.asarray([self._rename(c) for c in names], dtype=object)
 
 
+class BinaryMapper(BaseEstimator, TransformerMixin):
+    """二値列を 0/1 に直す。**どちらが 1 かを列名で示す。**
+
+    水準が 2 つの列は one-hot にしても列は 1 本にしかならない。問題は
+    **どちらの水準が 1 になるか**で、`OneHotEncoder(drop="first")` はそれを
+    sklearn の辞書順で決めてしまう。`男/女` は「女」が先なので `性別=男`、
+    `M/F` は「F」が先なので `性別=M` と、**同じ意味の列が書き方で別名になる。**
+
+    ここでは schema が見つけた対応表（`ColumnSpec.value_map`）をそのまま使う。
+    男性=1・女性=0 と決まり、列名は `男性` になる。0 側が何かは
+    `reference_levels()` で確かめられる。
+
+    対応表に無い値（表記ゆれ、想定外の水準）は欠損にして、後段の補完に渡す。
+    **学習するものが何も無い**ので、train と test で結果が食い違うことがない。
+    """
+
+    def __init__(self, mappings: dict | None = None, names: dict | None = None):
+        self.mappings = mappings
+        self.names = names
+
+    def _map(self, col):
+        return {_norm(k): v for k, v in (self.mappings or {}).get(col, {}).items()}
+
+    def _name(self, col):
+        return (self.names or {}).get(col, str(col))
+
+    def fit(self, X, y=None):
+        X = pd.DataFrame(X)
+        self.feature_names_in_ = np.asarray(X.columns, dtype=object)
+        self.n_features_in_ = X.shape[1]
+        return self
+
+    def transform(self, X):
+        X = pd.DataFrame(X)
+        out = {}
+        for c in X.columns:
+            m = self._map(c)
+            col = X[c]
+            vals = [np.nan if pd.isna(v) else m.get(_norm(v), np.nan) for v in col]
+            out[self._name(c)] = pd.to_numeric(pd.Series(vals, index=col.index),
+                                               errors="coerce")
+        return pd.DataFrame(out, index=X.index)
+
+    def get_feature_names_out(self, input_features=None):
+        names = (input_features if input_features is not None
+                 else getattr(self, "feature_names_in_", []))
+        return np.asarray([self._name(c) for c in names], dtype=object)
+
+
 # ================================================================== 設計行列
 def _ohe_name(feature, category):
     """one-hot の列名。sklearn の 'infrequent_sklearn' は日本語に直す。"""
@@ -130,6 +181,7 @@ def build_preprocessor(
     feats = columns if columns is not None else schema.features()
 
     num, cat, ordi, dropped = [], [], [], []
+    binmaps, binnames = {}, {}
     for c in feats:
         sp = schema.columns.get(c)
         if sp is None:
@@ -139,6 +191,11 @@ def build_preprocessor(
             num.append(c)
         elif sp.role == ORDINAL:
             ordi.append(c)
+        elif sp.role == BINARY and sp.value_map:
+            # ★対応表のある二値列は one-hot に回さない。★
+            #   男性=1・女性=0 のように**意味で**向きを決め、列名もそれに合わせる。
+            binmaps[c] = dict(sp.value_map)
+            binnames[c] = binary_output_name(c, sp.value_map)
         elif sp.role in (BINARY, NOMINAL, GROUP):
             cat.append(c)
         elif sp.role == DATETIME:
@@ -149,7 +206,17 @@ def build_preprocessor(
         else:
             dropped.append((c, f"役割 {sp.role}"))
 
+    # 出力名がぶつかるときは元の列名に戻す（`男性` という列が既にある場合など）
+    taken = set(num) | set(ordi) | set(cat)
+    for c, nm in list(binnames.items()):
+        if nm != c and (nm in taken or list(binnames.values()).count(nm) > 1):
+            binnames[c] = str(c)
+        taken.add(binnames[c])
+
+    binary = list(binmaps)
     steps, record = [], {"numeric": num, "categorical": cat, "ordinal": ordi,
+                         "binary": binary, "binary_names": dict(binnames),
+                         "binary_maps": dict(binmaps),
                          "dropped": dropped, "policy": pol}
 
     if num:
@@ -161,6 +228,11 @@ def build_preprocessor(
             ("enc", OrdinalEncoder(categories=cats, handle_unknown="use_encoded_value",
                                    unknown_value=np.nan)),
         ]), ordi))
+    if binary:
+        steps.append(("bin", Pipeline([
+            ("map", BinaryMapper(mappings=dict(binmaps), names=dict(binnames))),
+            ("imp", SimpleImputer(strategy="most_frequent")),
+        ]), binary))
     if cat:
         enc = pol.get("encode", {})
         steps.append(("cat", Pipeline([
@@ -413,7 +485,8 @@ class Preprocessor:
 
     def _needed(self) -> list:
         d = self.design
-        return list(d["numeric"]) + list(d["ordinal"]) + list(d["categorical"])
+        return (list(d["numeric"]) + list(d["ordinal"])
+                + list(d.get("binary", [])) + list(d["categorical"]))
 
     def input_columns(self) -> list:
         """前処理に**実際に投入した**元の列（変換後の列名ではない）。
@@ -430,13 +503,20 @@ class Preprocessor:
         """
         if not self._fitted:
             return {}
+        out = {}
+
+        # 二値列（0/1 に直したもの）。0 側が基準である。
+        for col, m in (self.design.get("binary_maps") or {}).items():
+            neg = next((k for k, v in m.items() if v == 0), None)
+            if neg is not None:
+                out[col] = str(neg)
+
         try:
             ohe = self.ct.named_transformers_["cat"].named_steps["ohe"]
         except (KeyError, AttributeError):
-            return {}
+            return out
         if getattr(ohe, "drop_idx_", None) is None:
-            return {}
-        out = {}
+            return out
         for col, cats, idx in zip(self.design["categorical"], ohe.categories_,
                                   ohe.drop_idx_):
             if idx is not None:
@@ -453,8 +533,8 @@ class Preprocessor:
         d = self.design
         lines = [
             f"前処理 {'（fit 済み）' if self._fitted else '（未 fit）'}",
-            f"  数値 {len(d['numeric'])} 列 / カテゴリ {len(d['categorical'])} 列 / "
-            f"順序 {len(d['ordinal'])} 列",
+            f"  数値 {len(d['numeric'])} 列 / 二値 {len(d.get('binary', []))} 列 / "
+            f"カテゴリ {len(d['categorical'])} 列 / 順序 {len(d['ordinal'])} 列",
         ]
         if d["dropped"]:
             lines.append("  入れなかった列: "

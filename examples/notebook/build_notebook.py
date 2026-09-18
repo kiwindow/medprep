@@ -197,7 +197,7 @@ code("""
 # ★このノートブックが必要とする medprep の版★
 #   古い medprep が入っていると、あとのセルが AttributeError で止まる。
 #   ここで版を確かめて、足りなければ**理由を言って止める**。
-REQUIRED_MEDPREP = (0, 6, 0)
+REQUIRED_MEDPREP = (0, 7, 0)
 
 if IN_COLAB:
     # -U（更新）と --no-cache-dir を付ける。付けないと、同じ版番号のまま
@@ -459,6 +459,8 @@ md("""
 前処理済み  ＋ ⑨ 目的変数が欠測の症例を除く   ⑩ train / test に分割
            ⑪ 欠損を補完  ⑫ スケーリング  ⑬ カテゴリをダミー化
            （★⑪〜⑬ は train だけで fit する★）
+           ※二値（男/女・男性/女性・M/F）は 0/1 の 1 本にまとめる。
+             列名は **男性**（1=男性・0=女性）。書き方が違っても同じ列名になる。
 ```
 
 **⑨ でだけ行が減る。** だから前処理済みにだけ `元の行` と ID の列を付けてある。
@@ -831,6 +833,47 @@ except mp.LeakageError as e:
 """)
 
 md("""
+## カテゴリはどう数値になったか ―― **1 がどちらかを列名で示す**
+
+二値の列（男/女、男性/女性、M/F、Male/Female）は **0/1 の 1 本**にまとめる。
+one-hot の結果は同じだが、**どちらを 1 にするかを辞書順ではなく意味で決める。**
+
+| 元の列 | 元の値 | 作る列 | 値 |
+|---|---|---|---|
+| 性別 | 男 / 女 | **男性** | 男性=1・女性=0 |
+| 性別 | M / F | **男性** | 同上（★書き方が違っても同じ列名になる★） |
+| 糖尿病 | あり / なし | 糖尿病 | あり=1・なし=0 |
+
+`性別=男` という列名にしないのは、**`M/F` で記録された施設のデータと結合したときに
+`性別=M` という別の列になってしまうから**である。列名は意味で決める。
+
+`糖尿病` の列名を変えないのは、1 側の水準名が「あり」だからである。
+列名を「あり」にしたら**何の列か分からなくなる。**
+
+水準が 3 つ以上の列（施設 A院/B院/C院）はこれまでどおり one-hot にし、
+**基準にした水準（列を作らなかった水準）** を下に出す。基準が分からなければ係数は読めない。
+""")
+
+code("""
+# 出てきた列。二値は 1 本にまとまっている
+print('前処理後の列:', list(rep2.X_train.columns))
+
+# 0 とした水準（＝基準）
+print()
+for src, base in rep2.pipeline.reference_levels().items():
+    print(f'  {src}: 基準 = {base}')
+""")
+
+code("""
+# 元の値と突き合わせて、向きを自分の目で確かめる
+chk = pd.DataFrame({
+    '元の性別': rep2.split.train.loc[rep2.X_train.index, '性別'],
+    '男性': rep2.X_train['男性'],
+})
+print(mp.frame_text(chk.value_counts().reset_index(name='人数')))
+""")
+
+md("""
 ## 前処理済みの行列をそのままモデルに渡す
 
 `rep2.X_train` は **列名の付いた DataFrame** である。
@@ -935,7 +978,7 @@ nb = {
     "nbformat": 4,
     "nbformat_minor": 0,
 }
-VERSION = "Ver1_5"
+VERSION = "Ver1_6"
 out = str(pathlib.Path(__file__).resolve().parent / f"Preprocessing_{VERSION}.ipynb")
 with open(out, "w", encoding="utf-8") as f:
     json.dump(nb, f, ensure_ascii=False, indent=1)

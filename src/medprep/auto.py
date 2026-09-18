@@ -687,7 +687,9 @@ def _outputs_table(res: PrepResult, *, save: bool, save_data: bool) -> pd.DataFr
                    "⑥ 日付を解釈（和暦・全角・シリアル値）　⑦ 外すのが望ましい行に印")
     use_steps = clean_steps + "　⑧ **解析に使わない列を削除**（ID・重複列・自由記載）"
     prep_steps = (use_steps + "　⑨ **目的変数が欠測の症例を除く**　⑩ train/test に分割　"
-                  "⑪ 欠損を補完・⑫ スケーリング・⑬ カテゴリをダミー化"
+                  "⑪ 欠損を補完・⑫ スケーリング・"
+                  "⑬ カテゴリをダミー化（二値は 0/1 の 1 本にまとめ、"
+                  "1 が何かが分かる列名にする。性別 → **男性**：1=男性・0=女性）"
                   "（★⑪〜⑬ は train だけで fit★）")
 
     n_raw = len(res.df_raw) if res.df_raw is not None else 0

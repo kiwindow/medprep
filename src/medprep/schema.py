@@ -105,6 +105,30 @@ BINARY_MAPS: list[dict] = [
     {"1": 1, "0": 0},
 ]
 
+#: 1 側の水準名が、それだけで意味の通る列名になるもの。
+#:   `性別` を 0/1 にしたとき、列名を `性別` のままにすると **どちらが 1 か分からない。**
+#:   `男性` にすれば「1 = 男性」と読める。書き方の揺れ（男 / M / Male）はここで 1 つにする。
+#:   一方 `糖尿病`（あり/なし）は、1 側の水準名が「あり」なので、
+#:   列名を「あり」にしたら**何のことか分からなくなる**。そういう列は元の列名のままにする。
+BINARY_POSITIVE_NAME: dict[str, str] = {
+    "男": "男性", "男性": "男性", "m": "男性", "male": "男性",
+    "死亡": "死亡",
+}
+
+
+def binary_output_name(col: str, value_map: dict | None) -> str:
+    """二値列を 0/1 にしたときの列名。**1 が何を指すかが分かる名前にする。**
+
+    >>> binary_output_name("性別", {"男": 1, "女": 0})   -> '男性'
+    >>> binary_output_name("糖尿病", {"あり": 1, "なし": 0}) -> '糖尿病'
+    """
+    if not value_map:
+        return str(col)
+    pos = next((k for k, v in value_map.items() if v == 1), None)
+    if pos is None:
+        return str(col)
+    return BINARY_POSITIVE_NAME.get(_norm(pos), str(col))
+
 
 def _norm(s) -> str:
     return unicodedata.normalize("NFKC", str(s)).strip().lower()

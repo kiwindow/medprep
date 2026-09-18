@@ -23,6 +23,7 @@ from medprep.schema import (
     ORDINAL,
     OUTCOME,
     Schema,
+    binary_output_name,
     cramers_v,
     infer_column,
 )
@@ -222,3 +223,22 @@ def test_to_frame_has_one_row_per_column():
     sch = Schema.infer(frame())
     assert len(sch.to_frame()) == len(sch.columns)
     assert "判断の根拠" in sch.to_frame().columns
+
+
+# ------------------------------------------------- 二値列を 0/1 にしたときの列名
+@pytest.mark.parametrize("col,vmap,expected", [
+    ("性別", {"男": 1, "女": 0}, "男性"),
+    ("性別", {"男性": 1, "女性": 0}, "男性"),
+    ("性別", {"M": 1, "F": 0}, "男性"),
+    ("性別", {"Male": 1, "Female": 0}, "男性"),
+    ("sex", {"男": 1, "女": 0}, "男性"),
+    ("転帰", {"生存": 0, "死亡": 1}, "死亡"),
+    # 1 側の名前だけでは何の列か分からないものは、元の列名を残す
+    ("糖尿病", {"あり": 1, "なし": 0}, "糖尿病"),
+    ("糖尿病", {"1": 1, "0": 0}, "糖尿病"),
+    ("HBs抗原", {"陽性": 1, "陰性": 0}, "HBs抗原"),
+    ("何か", None, "何か"),
+])
+def test_binary_output_name(col, vmap, expected):
+    """**0/1 に直したとき、1 が何を指すかが列名から読めること。**"""
+    assert binary_output_name(col, vmap) == expected

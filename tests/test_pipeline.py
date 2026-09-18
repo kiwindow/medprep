@@ -295,3 +295,91 @@ def test_a_second_fit_is_recorded():
     prep = Preprocessor(sch).fit(sp.train)
     prep.fit(sp.train)
     assert any("2 回目の fit" in n for n in prep.record.notes)
+
+
+# ------------------------------------------------- 二値列（性別は男性=1・女性=0）
+def _bin_frame(values, n=200, col="性別"):
+    return pd.DataFrame({
+        "仮名ID": [f"P{i:04d}" for i in range(n)],
+        col: rng.choice(values, n),
+        "年齢": rng.normal(68, 12, n).round(0),
+        "Alb": rng.normal(3.6, 0.45, n).round(1),
+        "転帰": (rng.random(n) < 0.3).astype(int),
+    })
+
+
+def _bin_schema(df):
+    return Schema.infer(df, id_col="仮名ID", outcome="転帰", task="classification")
+
+
+@pytest.mark.parametrize("values,positive,negative", [
+    (["男", "女"], "男", "女"),
+    (["男性", "女性"], "男性", "女性"),
+    (["M", "F"], "M", "F"),
+    (["Male", "Female"], "Male", "Female"),
+])
+def test_sex_becomes_one_column_named_male(values, positive, negative):
+    """**書き方が違っても、出てくる列は必ず `男性`（1=男性・0=女性）にする。**
+
+    `OneHotEncoder(drop="first")` に任せると、どの水準が残るかが sklearn の
+    辞書順で決まる。`男/女` なら `性別=男`、`M/F` なら `性別=M` と、
+    **同じ意味の列が書き方で別名になり、1 がどちらかも読めない。**
+    """
+    df = _bin_frame(values)
+    sch = _bin_schema(df)
+    sp = split(df, sch, test_size=0.25, seed=0)
+    p = prepare(sp, sch)
+
+    assert "男性" in p.X_train.columns
+    assert not [c for c in p.X_train.columns if c.startswith("性別")]
+
+    x = p.X_train["男性"]
+    src = sp.train.loc[x.index, "性別"]
+    assert set(x.unique()) <= {0, 1}
+    assert (x[src == positive] == 1).all()
+    assert (x[src == negative] == 0).all()
+
+    # 基準（0 側）が何かを報告できる
+    assert p.preprocessor.reference_levels()["性別"] == negative
+
+
+def test_binary_yes_no_keeps_its_own_column_name():
+    """`あり/なし` の 1 側は「あり」。列名を「あり」にしたら何の列か分からなくなる。"""
+    df = _bin_frame(["あり", "なし"], col="糖尿病")
+    sch = _bin_schema(df)
+    sp = split(df, sch, test_size=0.25, seed=0)
+    p = prepare(sp, sch)
+    assert "糖尿病" in p.X_train.columns
+    assert "糖尿病=あり" not in p.X_train.columns
+    src = sp.train.loc[p.X_train.index, "糖尿病"]
+    assert (p.X_train["糖尿病"][src == "あり"] == 1).all()
+
+
+def test_binary_mapping_is_not_learned_from_the_data():
+    """**train に片方の水準しか出なくても、test の向きは変わらない。**
+
+    one-hot はカテゴリ集合を fit で覚えるので、train に女性しか居なければ
+    test の男性を扱えない。対応表で決める二値列にはその事故が起こらない。
+    """
+    df = _bin_frame(["男", "女"], n=160)
+    df.loc[df.index[:120], "性別"] = "女"          # train 側をすべて女にする
+    sch = _bin_schema(df)
+    prep = Preprocessor(sch)
+    xtr = prep.fit_transform(mark_as(df.iloc[:120], "train"))
+    test = mark_as(df.iloc[120:], "test")
+    xte = prep.transform(test)
+    assert (xtr["男性"] == 0).all()
+    src = test.loc[xte.index, "性別"]
+    assert (xte["男性"][src == "男"] == 1).all()
+    assert (xte["男性"][src == "女"] == 0).all()
+
+
+def test_unknown_level_does_not_crash_and_is_imputed():
+    """対応表に無い値は欠損として扱い、後段の補完に渡す（例外にしない）。"""
+    df = _bin_frame(["男", "女"], n=160)
+    sch = _bin_schema(df)
+    prep = Preprocessor(sch)
+    prep.fit(mark_as(df.iloc[:120], "train"))
+    xte = prep.transform(mark_as(df.iloc[120:].assign(性別="不明"), "test"))
+    assert xte["男性"].notna().all()
+    assert set(xte["男性"].unique()) <= {0, 1}

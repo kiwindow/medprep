@@ -309,8 +309,12 @@ def build_report(
         s.pre(preprocessor.report())
         refs = preprocessor.reference_levels()
         if refs:
-            s.table(pd.DataFrame([{"列": k, "基準水準": v} for k, v in refs.items()]),
-                    caption="one-hot の基準水準（係数はこの水準との比になる）")
+            names = (getattr(preprocessor, "design", {}) or {}).get("binary_names", {})
+            s.table(pd.DataFrame([{"元の列": k, "基準（0 とした水準）": v,
+                                   "作った列": names.get(k, "")} for k, v in refs.items()]),
+                    caption="基準水準（係数はこの水準との比になる）。"
+                            "二値列は 0/1 の 1 本にまとめ、1 が何かが分かる列名にしてある"
+                            "（性別 → <b>男性</b>：1=男性・0=女性）")
 
     # --- 図
     if figures is not None and len(figures):
