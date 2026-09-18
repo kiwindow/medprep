@@ -36,6 +36,10 @@
     rep = mp.audit(df, sch, id_col="仮名ID", group="施設", date_col="検体採取日")
     rep.show()
 
+    # Table 1（検定は自動で選び、選んだ理由と効果量を必ず添える）
+    t1 = mp.table_one(df, sch, groupby="施設")
+    print(t1.report())
+
     # 生存時間データ（ID / 観察開始日 / イベント発生日 / 打ち切り日 の4列）
     sf = mp.build_survival(df, id_col="仮名ID", start_date="観察開始年月日",
                            event_date="event発生年月日", censor_date="観察打ち切り年月日",
@@ -57,9 +61,31 @@ __version__ = "0.1.0"
 __author__ = "Kazuhiro Iwadoh"
 __license__ = "MIT"
 
-from . import clean, dates, hd, quality, schema, survival_input, tac, targets, timing
+from . import (
+    clean,
+    dates,
+    describe,
+    hd,
+    quality,
+    schema,
+    survival_input,
+    tac,
+    targets,
+    timing,
+)
 from .clean import CleanReport, build_alias_map, clean_numeric, derive, load_dict
 from .dates import DateParseResult, parse_date_frame, parse_date_series
+from .describe import (
+    Comparison,
+    ComparisonResult,
+    Normality,
+    TableOneResult,
+    compare_groups,
+    normality,
+    table_one,
+    target_achievement,
+    target_summary,
+)
 from .hd import (
     bmi,
     clear_space_ratio,
@@ -96,8 +122,8 @@ from .timing import POST, PRE, UNKNOWN, TimingSchema, check_requirements, detect
 __all__ = [
     "__version__",
     # モジュール
-    "clean", "dates", "hd", "quality", "schema", "survival_input", "tac", "targets",
-    "timing",
+    "clean", "dates", "describe", "hd", "quality", "schema", "survival_input", "tac",
+    "targets", "timing",
     # 列の役割とデータ品質監査
     "Schema", "ColumnSpec", "infer_column",
     "audit", "AuditReport", "Finding", "method_change_steps",
@@ -117,6 +143,9 @@ __all__ = [
     # TAC
     "tac_bun_simple", "tac_trapezoid", "tac_linear", "interdialytic_hours",
     "bun_to_urea_mg_dl", "bun_to_urea_mmol_l", "urea_to_bun_mg_dl", "TACResult",
+    # 記述統計・Table 1・群間比較
+    "table_one", "TableOneResult", "compare_groups", "ComparisonResult", "Comparison",
+    "normality", "Normality",
     # 管理目標
-    "in_target", "describe_target", "achievement",
+    "in_target", "describe_target", "achievement", "target_achievement", "target_summary",
 ]

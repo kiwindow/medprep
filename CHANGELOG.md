@@ -5,6 +5,29 @@
 
 ## [Unreleased]
 
+### 追加（Phase 7）
+- `describe` — **記述統計・Table 1・群間比較・管理目標の達成率。**
+  表を出すだけでなく、**どの検定をなぜ選んだか**を「判定の根拠」列に残す。
+  - `table_one(df, schema, groupby=...)` — 連続変数は正規性の判定に従って
+    平均(SD) / 中央値[Q1,Q3] を書き分け、カテゴリは水準ごとに n(%)。
+    項目名に**単位と採血時点**を出す（透析前 BUN と透析後 BUN が同じ表に並ぶため）。
+    `to_excel()` / `to_html()` / `report()`。
+  - `compare_groups(df, by, ...)` — 検定の自動選択。
+    2群正規 → Welch の t／2群非正規 → Mann-Whitney U／3群以上正規 → 一元配置分散分析
+    →（事後）Tukey HSD／3群以上非正規 → Kruskal-Wallis →（事後）Dunn（Holm 補正）／
+    カテゴリ → χ²（期待度数 < 5 が 2 割超なら Fisher 正確検定に自動切替）／
+    `paired_by=` で対応のある t・Wilcoxon 符号付順位。
+  - **効果量を必ず併記**（Hedges' g / Cliff's δ / η² / ε² / Cramér's V）と SMD。
+    3 群以上の SMD は対ごとの最大値。多水準の SMD は Yang & Dalton 法。
+  - 列数ぶんの p 値には **BH の q 値を併記**する。
+  - **ベースライン表の p 値の解釈上の注意を必ず添える**
+    （無作為割付なら意味が無く、観察研究なら例数で小さくなる。バランスは SMD で見る）。
+  - `target_achievement(df, by=...)` — 辞書から列の対応を自動で作り、管理目標の達成率を出す。
+    境界値ちょうどの症例数を必ず併記する。
+  - `normality(x)` — 平均(SD) で要約してよいかの判定。**検定の棄却だけでは非正規としない**
+    （大標本では実用上どうでもよい歪みでも棄却されるため）。歪度・尖度と併用し、
+    どちらの基準で決めたかを根拠として残す。
+
 ### 追加
 - `schema` — **列の役割を推定し、その判断を理由つきで書き出す。**
   役割は id / outcome / time / event / group / datetime / numeric / binary /
@@ -70,7 +93,6 @@
   cp311 と cp313 では必要な wheel も違うので、セルごとに分けるほうが正しい。
 
 ### 予定
-- `describe.py` — Table 1、群間比較、多重比較補正、管理目標の達成率
 - `survival.py` — KM、log-rank、Cox、比例ハザード検定、フォレストプロット
 - `missing.py` / `outliers.py` / `pipeline.py` / `split.py`
 - `viz.py` / `report.py` — 単一ファイルの HTML レポート

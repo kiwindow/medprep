@@ -117,6 +117,53 @@ rep.show()
 血清鉄が TIBC を超えている／欠測が施設に偏っている／目的変数から導かれた列が
 説明変数に残っている（リーク）。いずれも例外を出さずに通ってしまいます。
 
+### Table 1 を出す（検定の選択理由と効果量つき）
+
+```python
+t1 = mp.table_one(df, sch, groupby="低Alb")
+print(t1.report())
+t1.to_excel("table1.xlsx")
+```
+
+```
+                       項目                全体           Alb<3.5           Alb≥3.5                検定      p  q(BH)    SMD 欠測
+                        n               578               215               363
+          年齢 [歳], 平均 (SD)       67.8 (12.0)       67.9 (11.9)       67.8 (12.1)      Welch の t 検定  0.908  0.908  0.010  3
+CRP [mg/dL], 中央値 [Q1, Q3]    0.2 [0.1, 0.7]    0.3 [0.1, 0.7]    0.2 [0.1, 0.6] Mann-Whitney U 検定  0.753  0.908 -0.084  0
+    補正Ca [mg/dL], 平均 (SD)         9.3 (0.8)         9.7 (0.7)         9.1 (0.7)      Welch の t 検定 <0.001 <0.001  0.874  0
+```
+
+検定は自動で選びます。**なぜその検定なのかは「判定の根拠」列に残ります。**
+
+```
+CRP [mg/dL]  Mann-Whitney U 検定  Cliff's δ = 0.016
+    → 2群・非正規。Shapiro-Wilk p=8.74e-40 < 0.05 で棄却され、歪度 7.63（|skew| ≥ 0.5）も大きい
+年齢 [歳]      Welch の t 検定      Hedges' g = 0.010
+    → 2群・正規。Shapiro-Wilk p=0.089 ≥ 0.05。歪度 -0.19。分散の等質性を仮定しない Welch を既定にする
+```
+
+3 群以上なら事後比較（Tukey HSD / Dunn）まで出します。
+項目名に**単位と採血時点**が付くのは、透析前 BUN と透析後 BUN が同じ表に並ぶからです。
+
+### 管理目標の達成率 — 境界値を必ず見せる
+
+```python
+mp.target_achievement(df, by="施設")
+```
+
+```
+    無機リン        全体           3.5 以上、5.5 未満   600  277  46.2%   CKD-MBD 2025年改訂版 Statement 3.1.2
+    無機リン  【上限境界 5.5 ちょうど】        含まない       21    0   0.0%   境界値の扱いを確認すること
+```
+
+「5.5 未満」を `<= 5.5` と書くと達成率が動きます。合成データ 600 例での実測：
+
+```
+    無機リン    正しく開区間 46.2% / 誤って閉区間 49.7%  → 差 +3.5%（21 例）
+    補正Ca     正しく開区間 44.2% / 誤って閉区間 50.5%  → 差 +6.3%（38 例）
+    血色素量    正しく開区間 59.0% / 誤って閉区間 61.8%  → 差 +2.8%（17 例）
+```
+
 ### 生存時間データを日付だけから作る
 
 観察期間を人が計算する必要はありません。**日付を入れれば済むようにしてあります。**
@@ -241,7 +288,7 @@ uv sync --extra dev
 uv run pytest          # テスト
 uv run ruff check .    # lint
 uv run python examples/make_synthetic.py   # 演習用の合成データを作る
-uv run python examples/run_e2e.py          # schema → audit → 掃除 → 生存時間 → Table 1 → KM → Cox
+uv run python examples/run_e2e.py          # schema → audit → 掃除 → 生存時間 → Table 1 → 管理目標 → KM → Cox
 ```
 
 `examples/make_synthetic.py` は**実データを一切含まない**合成透析コホート（600 例）を
@@ -252,9 +299,8 @@ uv run python examples/run_e2e.py          # schema → audit → 掃除 → 生
 
 ## 状態
 
-土台の 9 モジュールが動き、以下は実装中です。
+土台の 10 モジュールが動き、以下は実装中です。
 
-- `describe.py` — Table 1、群間比較、多重比較補正
 - `survival.py` — KM、log-rank、Cox、比例ハザード検定、フォレストプロット
 - `missing.py` / `outliers.py` / `pipeline.py` / `split.py`
 - `viz.py` / `report.py` — 単一ファイルの HTML レポート
