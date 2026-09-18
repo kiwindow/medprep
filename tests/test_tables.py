@@ -78,13 +78,16 @@ def test_binary_puts_the_positive_level_first():
 
 
 def test_table2_has_p_on_the_right_and_tests_in_the_footnote():
-    """★p 値は右端の 1 列だけ。検定手法は脚注。★"""
+    """★p 値は右端の 1 列だけ。検定手法は脚注。全体の列は入れない。★"""
     gs = built(group="施設")
     assert gs.table2 is not None
     cols = list(gs.table2.frame_ja.columns)
     assert cols[0] == "特性" and cols[-1].startswith("p値")
-    assert cols[1] == "全体 (N = 120) ¹"
+    # ★Table 2 に「全体」の列は入れない（全体は Table 1 の役目）★
+    assert not any("全体" in c for c in cols)
+    assert len(cols) == 2 + gs.table2.frame_ja.shape[1] - 2
     assert [c for c in cols if c.startswith("A院 (N = ")]
+    assert [c for c in cols if c.startswith("B院 (N = ")]
     # 表の中には検定名が出ない
     body = gs.table2.frame_ja.astype(str).to_numpy().ravel()
     assert not any("検定" in x or "t 検定" in x for x in body)

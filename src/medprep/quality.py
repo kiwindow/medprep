@@ -676,12 +676,12 @@ def _check_cross_item_consistency(df, amap, dic, id_col, findings):
     cca, ca, alb = col("cCa"), col("Ca"), col("Alb")
     if cca and ca and alb:
         c_, a_, l_ = _num(df[cca]), _num(df[ca]), _num(df[alb])
-        expect = a_ + (4.0 - l_)
+        expect = np.where(l_ < 4.0, a_ + (4.0 - l_), a_)
         ok = c_.notna() & a_.notna() & l_.notna()
         bad = ok & (np.abs(c_ - expect) > 0.15)
         if bad.any():
             findings.append(Finding(
-                WARN, "検算", "補正Ca（iCa）が Ca + (4 − Alb) と一致しない",
+                WARN, "検算", "補正Ca（iCa）が Payne 式（Alb<4 のとき Ca+(4-Alb)）と一致しない",
                 columns=[cca, ca, alb], n=int(bad.sum()),
                 examples=_examples(df, bad, id_col),
                 action="別の補正式を使っているなら、どの式かを記録すること。"

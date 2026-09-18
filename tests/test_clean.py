@@ -43,18 +43,18 @@ def test_missing_codes_and_text_markers():
 
 
 def test_derive_corrected_ca_and_product():
-    """iCa = Ca + (4 − Alb)。★Alb ≥ 4 でも式は同じ（補正しない扱いにしない）★
+    """iCa は **Payne 式**。★補正するのは Alb < 4.0 のときだけ★
 
-    0.8.0 までは「Alb < 4.0 のときだけ補正する」という日本の運用に合わせていたが、
-    0.9.0 で**式そのまま**に変えた。Alb 4.5 なら iCa は Ca より 0.5 低くなる。
-    列名も `補正Ca` → `iCa(mg/dL)` に変えた（単位を列名に書く）。
+    Alb ≥ 4.0 では補正せず実測 Ca をそのまま使う（日本の運用）。
+    無条件に `Ca + (4 − Alb)` とすると、Alb 4.5 の症例で実測より 0.5 低くなる。
+    列名は `補正Ca` → `iCa(mg/dL)`（単位を列名に書く）。
     """
     df = pd.DataFrame({"カルシウム(Ca)": [8.5, 8.5], "アルブミン(Alb)": [3.0, 4.5],
                        "無機リン(P)": [5.0, 5.0]})
     out, notes = derive(df)
-    assert out["iCa(mg/dL)"].tolist() == [9.5, 8.0]
-    assert out["iCa×P"].tolist() == [47.5, 40.0]
-    assert any("iCa" in n for n in notes)
+    assert out["iCa(mg/dL)"].tolist() == [9.5, 8.5]
+    assert out["iCa×P"].tolist() == [47.5, 42.5]
+    assert any("Payne" in n for n in notes)
 
 
 def test_unmatched_columns_are_reported_not_silently_ignored():
@@ -67,7 +67,8 @@ def test_unmatched_columns_are_reported_not_silently_ignored():
 def test_corrected_calcium_is_not_computed_when_albumin_is_missing():
     """★Alb が欠測なら補正Ca は「算出不能」であって Ca ではない。★
 
-    欠測を `np.where` で握りつぶすと、**補正されていない Ca が iCa として黙って混ざる**。
+    `np.where(np.nan < 4.0, ca + (4.0 - alb), ca)` は NaN の比較が False に落ちるため、
+    **補正されていない Ca が iCa として黙って混ざる**。
     合成データでは 49 例がこれに当たっていた。管理目標の達成率も Cox の係数も、
     その分だけ静かにずれる。missing.mcar_signals が
     「Alb の欠測と iCa が関連している」として検出した。
@@ -77,7 +78,7 @@ def test_corrected_calcium_is_not_computed_when_albumin_is_missing():
         "アルブミン(Alb)": [4.2, 3.0, np.nan],
     })
     out, notes = derive(df)
-    assert out["iCa(mg/dL)"].iloc[0] == pytest.approx(8.8)   # 9.0 + (4.0-4.2)
+    assert out["iCa(mg/dL)"].iloc[0] == pytest.approx(9.0)   # Alb≥4 → 補正しない
     assert out["iCa(mg/dL)"].iloc[1] == pytest.approx(9.0)   # 8.0 + (4.0-3.0)
     assert pd.isna(out["iCa(mg/dL)"].iloc[2])                # ★Ca の 9.0 を返さない★
     assert any("算出不能" in n for n in notes)
@@ -131,7 +132,7 @@ def test_dialysis_indices_use_the_stated_formulas():
     assert float(out.loc[0, "除水量(kg)"]) == pytest.approx(2.0)
     assert float(out.loc[0, "URR(%)"]) == pytest.approx((60 - 18) / 60 * 100)
     assert float(out.loc[0, "TSAT(%)"]) == pytest.approx(60 / 250 * 100)
-    assert float(out.loc[0, "iCa(mg/dL)"]) == pytest.approx(8.8 + (4 - 3.5))
+    assert float(out.loc[0, "iCa(mg/dL)"]) == pytest.approx(8.8 + (4 - 3.5))  # Alb 3.5
 
     # spKt/V = -ln(R - 0.008t) + (4 - 3.5R)·UF/W   ★UF は L（= kg）★
     r = 18 / 60

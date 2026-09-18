@@ -516,34 +516,34 @@ def gt_tables(
             tests.append(cm.test)
         if kind == CONTINUOUS:
             d = _digits(s)
-            rows_ja.append([lab.ja(c), _cont_cell(s, d)]
-                           + [_cont_cell(s[g == lv], d) for lv in levels] + [pv])
-            rows_en.append([lab.en(c), _cont_cell(s, d)]
-                           + [_cont_cell(s[g == lv], d) for lv in levels] + [pv])
+            cells = [_cont_cell(s[g == lv], d) for lv in levels]
+            rows_ja.append([lab.ja(c), *cells, pv])
+            rows_en.append([lab.en(c), *cells, pv])
             continue
         lv_all = _ordered_levels(s, schema, c)
         if not lv_all or len(lv_all) > max_levels:
             continue
         if len(lv_all) == 2:
             pos = lv_all[0]        # _ordered_levels が 1 側を先に置いている
-            rows_ja.append([f"{lab.ja(c)} — {pos}", _cat_cell(s, pos)]
-                           + [_cat_cell(s[g == lv], pos) for lv in levels] + [pv])
-            rows_en.append([f"{lab.en(c)} — {i18n.level_en(pos)}", _cat_cell(s, pos)]
-                           + [_cat_cell(s[g == lv], pos) for lv in levels] + [pv])
+            cells = [_cat_cell(s[g == lv], pos) for lv in levels]
+            rows_ja.append([f"{lab.ja(c)} — {pos}", *cells, pv])
+            rows_en.append([f"{lab.en(c)} — {i18n.level_en(pos)}", *cells, pv])
         else:
-            blank = ["—"] * (len(levels) + 1)
+            blank = ["—"] * len(levels)
             rows_ja.append([lab.ja(c), *blank, pv])
             rows_en.append([lab.en(c), *blank, pv])
             for x in lv_all:
-                rows_ja.append([f"　{x}", _cat_cell(s, x)]
-                               + [_cat_cell(s[g == lv], x) for lv in levels] + [""])
-                rows_en.append([f"　{i18n.level_en(x)}", _cat_cell(s, x)]
-                               + [_cat_cell(s[g == lv], x) for lv in levels] + [""])
+                cells = [_cat_cell(s[g == lv], x) for lv in levels]
+                rows_ja.append([f"　{x}", *cells, ""])
+                rows_en.append([f"　{i18n.level_en(x)}", *cells, ""])
 
-    h_ja = ([_LABEL_JA["characteristic"], f"全体 (N = {n}) ¹"]
-            + [f"{lv} (N = {sizes[lv]})" for lv in levels] + [f"{_LABEL_JA['p']} ²"])
-    h_en = ([_LABEL_EN["characteristic"], f"Overall (N = {n}) ¹"]
-            + [f"{i18n.level_en(lv)} (N = {sizes[lv]})" for lv in levels]
+    # ★Table 2 に「全体」の列は入れない。★
+    #   全体は Table 1 の役目である。ここに置くと 2 枚に分けた意味が無くなり、
+    #   横にも 1 列ぶん無駄に伸びる。
+    h_ja = ([_LABEL_JA["characteristic"]]
+            + [f"{lv} (N = {sizes[lv]}) ¹" for lv in levels] + [f"{_LABEL_JA['p']} ²"])
+    h_en = ([_LABEL_EN["characteristic"]]
+            + [f"{i18n.level_en(lv)} (N = {sizes[lv]}) ¹" for lv in levels]
             + [f"{_LABEL_EN['p']} ²"])
     uniq = list(dict.fromkeys(tests))
     t2 = GTTable(

@@ -327,7 +327,7 @@ def derive_dialysis(df: pd.DataFrame, dic: dict | None = None) -> tuple[pd.DataF
     | `透析時間(hr)` | 透析開始時刻・透析終了時刻 | 終了 − 開始（日またぎは +24h） |
     | `spKt/V` | 前後BUN・除水量・透析後体重・透析時間 | Daugirdas 第2世代式 |
     | `TSAT(%)` | Fe・TIBC | Fe / TIBC × 100 |
-    | `iCa(mg/dL)` | Ca・Alb | Ca + (4 − Alb) |
+    | `iCa(mg/dL)` | Ca・Alb | Payne 式（Alb < 4.0 のとき Ca + (4 − Alb)） |
 
     ★揃っていない組は作らない。★ 片方だけで推測した値を入れると、
     それが計算値なのか実測値なのか、あとから誰にも分からなくなる。
@@ -418,13 +418,20 @@ def derive_dialysis(df: pd.DataFrame, dic: dict | None = None) -> tuple[pd.DataF
     if ca and alb and ICA_COL not in out.columns:
         c = pd.to_numeric(out[ca], errors="coerce")
         a = pd.to_numeric(out[alb], errors="coerce")
+        # ★Payne 式：補正するのは Alb < 4.0 のときだけ。★
+        #   Alb ≥ 4.0 では補正せず実測 Ca をそのまま使う（日本の運用に合わせる）。
+        #   ここを無条件にすると、Alb 4.5 の症例で iCa が実測より 0.5 低くなる。
+        #
         # ★Alb が欠測なら算出不能。★ Ca をそのまま入れると、補正されていない値が
-        #   補正Ca として黙って混ざり、管理目標の達成率も回帰係数も静かにずれる。
-        out[ICA_COL] = (c + (4.0 - a)).round(2)
+        #   iCa として黙って混ざり、管理目標の達成率も回帰係数も静かにずれる。
+        #   `np.where(np.nan < 4.0, ...)` は False に落ちるので、必ず mask する。
+        ica = np.where(a < 4.0, c + (4.0 - a), c)
+        out[ICA_COL] = pd.Series(ica, index=out.index).mask(a.isna() | c.isna()).round(2)
         borrowed(ICA_COL, ca, f1)
         borrowed(ICA_COL, alb, f2)
         n_unknown = int((a.isna() & c.notna()).sum())
-        notes.append(f"{ICA_COL} = Ca + (4 − Alb) を算出した"
+        notes.append(f"{ICA_COL} を Payne 式で算出した"
+                     "（Alb < 4.0 のとき Ca + (4 − Alb)、Alb ≥ 4.0 のとき実測 Ca）"
                      + (f"。Alb が欠測の {n_unknown} 例は算出不能として NaN にした"
                         if n_unknown else ""))
     ph, _ = _pick(out, amap, "P")

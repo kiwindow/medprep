@@ -200,7 +200,7 @@ code("""
 # ★このノートブックが必要とする medprep の版★
 #   古い medprep が入っていると、あとのセルが AttributeError で止まる。
 #   ここで版を確かめて、足りなければ**理由を言って止める**。
-REQUIRED_MEDPREP = (0, 9, 0)
+REQUIRED_MEDPREP = (0, 9, 1)
 
 if IN_COLAB:
     # -U（更新）と --no-cache-dir を付ける。付けないと、同じ版番号のまま
@@ -855,7 +855,7 @@ md("""
 | `透析時間(hr)` | 透析開始時刻・透析終了時刻 | 終了 − 開始（日またぎは +24h） |
 | `spKt/V` | 前後BUN・除水量・透析後体重・透析時間 | Daugirdas 第2世代式 |
 | `TSAT(%)` | Fe・TIBC | Fe / TIBC × 100 |
-| `iCa(mg/dL)` | Ca・Alb | Ca + (4 − Alb) |
+| `iCa(mg/dL)` | Ca・Alb | Payne 式（Alb < 4.0 のとき Ca + (4 − Alb)） |
 
 spKt/V = −ln(R − 0.008t) + (4 − 3.5R)·UF/W
 （R = 透析後BUN/透析前BUN、t = 透析時間[hr]、**UF = 除水量[L]**、W = 透析後体重[kg]）
@@ -1292,7 +1292,7 @@ nb = {
     "nbformat": 4,
     "nbformat_minor": 0,
 }
-VERSION = "Ver1_8"
+VERSION = "Ver1_8_1"
 out = str(pathlib.Path(__file__).resolve().parent / f"Preprocessing_{VERSION}.ipynb")
 with open(out, "w", encoding="utf-8") as f:
     json.dump(nb, f, ensure_ascii=False, indent=1)
