@@ -2,6 +2,7 @@
    汚れた4列形式データ → 列の役割の推定 → 品質監査 → 掃除 → (duration, event)
    → Table 1 → KM → log-rank → Cox → PH 検定
 """
+import os
 import sys
 import warnings
 
@@ -16,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 import medprep as mp
+from medprep import viz
 from medprep.clean import clean_numeric, derive
 from medprep.describe import compare_groups, table_one, target_achievement, target_summary
 from medprep.missing import analyze as analyze_missing
@@ -23,6 +25,7 @@ from medprep.missing import drop_missing_outcome
 from medprep.outliers import detect as detect_outliers
 from medprep.pipeline import LeakageError, Preprocessor, leak_check, prepare
 from medprep.quality import audit
+from medprep.report import build_report
 from medprep.schema import Schema
 from medprep.splitting import split
 from medprep.survival import Survival
@@ -215,5 +218,29 @@ coef = (pd.Series(m.coef_[0], index=prep_out.X_train.columns)
         .sort_values(key=abs, ascending=False).head(8))
 print("\n係数の大きい順（★列名が残っているので読める★）:")
 print(coef.round(3).to_string())
+
+
+# ---------------------------------------------------------------- 15) レポート
+STEP("15) 図とレポート — すべてを HTML 1 枚にまとめる")
+figs = viz.overview(clean, sch, achievement=ach, balance=sp.balance)
+print(f"図 {len(figs)} 枚"
+      + (f"（描けなかったもの: {[t for t, _ in figs.skipped]}）" if figs.skipped else ""))
+
+rep = build_report(
+    clean, sch,
+    title="第3回演習 前処理レポート（合成データ）",
+    audit=aud, missing=ms, outliers=ol,
+    table1=t1, comparison=t1.comparison, achievement=ach,
+    survival_summary=surv.summary(), logrank=surv.logrank(by="低Alb"), cox=cox,
+    split=sp, preprocessor=prep_out.preprocessor, figures=figs,
+    path="prep_report.html",
+)
+rep.to_excel("prep_tables.xlsx")
+viz.close_all()
+size = os.path.getsize("prep_report.html") / 1024 / 1024
+print(f"  → prep_report.html（{size:.1f} MB、図は base64 埋め込みの単一ファイル）")
+print("  → prep_tables.xlsx（表をシート別に）")
+print("  ★症例レベルの値は既定では出していない。"
+      "必要なら show_values=True を明示すること。★")
 
 print("\n✅ 通し検証 完了")

@@ -58,6 +58,10 @@
     p  = mp.prepare(sp, sch)            # p.X_train / p.X_test は列名付き DataFrame
     print(mp.leak_check(p.preprocessor, sp.train, sp.test))
 
+    # すべてを HTML 1 枚にまとめる（図は base64 で埋め込む）
+    figs = mp.viz.overview(df, sch)
+    mp.build_report(df, sch, audit=rep, figures=figs, path="prep_report.html")
+
     # 辞書駆動の掃除
     clean, rep = mp.clean_numeric(df)
     rep.show()
@@ -82,6 +86,7 @@ from . import (
     outliers,
     pipeline,
     quality,
+    report,
     schema,
     splitting,
     survival,
@@ -89,6 +94,7 @@ from . import (
     tac,
     targets,
     timing,
+    viz,
 )
 from .clean import CleanReport, build_alias_map, clean_numeric, derive, load_dict
 from .dates import DateParseResult, parse_date_frame, parse_date_series
@@ -133,6 +139,7 @@ from .pipeline import (
     prepare,
 )
 from .quality import AuditReport, Finding, audit, method_change_steps
+from .report import Report, build_report
 from .schema import ColumnSpec, Schema, infer_column
 from .splitting import SplitResult, cv_splitter, fold_summary, mark_as, split
 from .survival import (
@@ -160,7 +167,8 @@ __all__ = [
     "__version__",
     # モジュール
     "clean", "dates", "describe", "hd", "missing", "outliers", "pipeline", "quality",
-    "schema", "splitting", "survival", "survival_input", "tac", "targets", "timing",
+    "report", "schema", "splitting", "survival", "survival_input", "tac", "targets",
+    "timing", "viz",
     # 列の役割とデータ品質監査
     "Schema", "ColumnSpec", "infer_column",
     "audit", "AuditReport", "Finding", "method_change_steps",
@@ -177,6 +185,8 @@ __all__ = [
     "split", "cv_splitter", "fold_summary", "mark_as", "SplitResult",
     "Preprocessor", "prepare", "Prepared", "build_preprocessor", "leak_check",
     "LeakageError",
+    # 図とレポート
+    "build_report", "Report",
     # 掃除
     "clean_numeric", "derive", "load_dict", "build_alias_map", "CleanReport",
     # 採血時点

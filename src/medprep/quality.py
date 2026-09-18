@@ -860,7 +860,7 @@ def method_change_steps(
                 action=(ch.get("action")
                         or "期間を共変量に入れるか期間で層別すること。"
                            "換算して 1 本の列にするのは、個別値の厳密換算ができないため勧めない")
-                + (f"  既知の影響: {ch['effect']}" if ch.get("effect") else "")))
+                + (f"（既知の影響: {ch['effect']}）" if ch.get("effect") else "")))
         else:
             out.append(Finding(
                 INFO, "測定法",
