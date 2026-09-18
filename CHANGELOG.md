@@ -3,7 +3,19 @@
 このファイルは [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) の体裁に従い、
 バージョンは [セマンティック バージョニング](https://semver.org/lang/ja/) に従う。
 
-## [Unreleased]
+## [0.2.0] — 2026-09-18
+
+Phase 11（`autoprep` の結線・`paths`）と Phase 12（第3回の教材）をまとめて。
+
+### 変更（0.2.0）
+- **版番号の出どころを 1 つにした。** `pyproject.toml` の `version` を廃し、
+  `src/medprep/__init__.py` の `__version__` から取る（hatchling の dynamic version）。
+  2 か所に書くと必ずずれる。ずれると、**Colab の受講者が「新しいはずなのに古い medprep」を
+  掴んでも誰も気づけない。**
+- 演習NBの導入セルに **`-U --no-cache-dir` と版の検査**を入れた。
+  古ければ「ランタイムを再起動してから流し直すこと」と**理由を言って止める**。
+  （版番号が同じままだと pip は取りに行かない。読み込み済みの古いモジュールは
+  再起動しないと入れ替わらない。）
 
 ### 追加（Phase 12）— 第3回の教材
 - `examples/notebook/Preprocessing_Ver1_0.ipynb` — **第3回演習ノートブック**（63 セル）。

@@ -52,6 +52,12 @@ Hb 0 g/dL は外れ値ではなく入力ミスです。winsorize してはいけ
 
 ## 導入
 
+> **Colab で「`module 'medprep' has no attribute ...`」が出たとき**
+> 入っている medprep が古い。`!pip install -q -U --no-cache-dir "medprep @ git+..."`
+> を実行したうえで、**「ランタイム → セッションを再起動する」**を必ず行うこと。
+> 一度読み込まれたモジュールは、再起動しないと入れ替わらない。
+
+
 ```bash
 # uv（推奨。講座の環境）
 uv add "medprep @ git+https://github.com/kiwindow/medprep"

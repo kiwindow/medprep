@@ -4,7 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "medprep"
-version = "0.1.0"
+# ★版番号は src/medprep/__init__.py の __version__ が唯一の出どころ★
+#   2 か所に書くと必ずずれる。ずれると、Colab の受講者が
+#   「新しいはずなのに古い medprep」を掴んでも誰も気づけない。
+dynamic = ["version"]
 description = "医学研究データの前処理・記述統計・生存時間解析を自動化する。日本腎・血液浄化AI学会 演習講座「鹿鳴館」教材。"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -58,6 +61,9 @@ dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
 Homepage = "https://github.com/kiwindow/medprep"
 Repository = "https://github.com/kiwindow/medprep"
 Issues = "https://github.com/kiwindow/medprep/issues"
+
+[tool.hatch.version]
+path = "src/medprep/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/medprep"]
