@@ -6,7 +6,9 @@
 ## [Unreleased]
 
 ### 変更（CI）
-- `actions/checkout` を v4 → v7、`astral-sh/setup-uv` を v5 → v10 に上げた。
+- `actions/checkout` を v4 → v7、`astral-sh/setup-uv` を v5 → v10.1.0 に上げた。
+  setup-uv はリリースが immutable で浮動の major タグ（`v10`）を作っていないため、
+  実在するタグに厳密固定する。
   v4 / v5 は Node.js 20 を指しており、実行環境が強制的に Node 24 に載せ替えていた。
 - `cache-dependency-glob: "pyproject.toml"` を指定した。ライブラリなので `uv.lock` を
   追跡しておらず、既定のパターンに何も一致せずキャッシュ鍵が固定されていた。

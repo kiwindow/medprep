@@ -32,8 +32,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # astral-sh/setup-uv はリリースが immutable で、v10 のような
+      # 浮動の major タグを作っていない。@v10 と書くと
+      # "Unable to resolve action ... unable to find version v10" で全ジョブが落ちる。
+      # 版を上げるときは https://github.com/astral-sh/setup-uv/tags で
+      # 実在するタグを確かめること。
       - name: uv を導入する
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: true
           # ライブラリなので uv.lock は追跡していない。何も指定しないと
@@ -63,7 +68,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
@@ -75,7 +80,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
