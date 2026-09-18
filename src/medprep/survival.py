@@ -54,6 +54,7 @@ from lifelines.utils import median_survival_times, restricted_mean_survival_time
 from .describe import _adjust, _p, _r, group_levels
 from .schema import BINARY, GROUP, NOMINAL, NUMERIC, ORDINAL, Schema
 from .survival_input import SurvivalFrame
+from .textfmt import frame_text
 
 NR = "NR"           # not reached（生存期間中央値に到達しなかった）
 EPV_MIN = 10
@@ -76,7 +77,7 @@ class KMResult:
     figure: object = None
 
     def report(self) -> str:
-        lines = [f"Kaplan-Meier 推定（単位: {self.unit}）", self.table.to_string(index=False)]
+        lines = [f"Kaplan-Meier 推定（単位: {self.unit}）", frame_text(self.table)]
         for n in self.notes:
             lines.append(f"[注記] {n}")
         return "\n".join(lines)
@@ -103,7 +104,7 @@ class LogRankResult:
                          f"χ² = {t['statistic']:.3f}（df=1）, p = {_p(t['p'])}")
         if self.pairwise is not None and len(self.pairwise):
             lines += [f"対比較（{self.correction.upper()} 補正）:",
-                      self.pairwise.to_string(index=False)]
+                      frame_text(self.pairwise)]
         for n in self.notes:
             lines.append(f"[注記] {n}")
         return "\n".join(lines)
@@ -152,12 +153,12 @@ class CoxResult:
             lines.append(f"欠測により除外: {self.n_dropped} 例"
                          f"（うちイベント {self.events_dropped} 件）")
         if len(self.univariate):
-            lines += ["\n単変量スクリーニング:", self.univariate.to_string(index=False)]
-        lines += ["\n多変量:", self.summary.to_string()]
+            lines += ["\n単変量スクリーニング:", frame_text(self.univariate)]
+        lines += ["\n多変量:", frame_text(self.summary, index=True)]
         lines.append(f"\nC-index = {self.c_index:.3f}")
         if len(self.ph):
             lines += ["\n比例ハザード仮定の検定（Schoenfeld 残差）:",
-                      self.ph.to_string()]
+                      frame_text(self.ph, index=True)]
         for w in self.warnings:
             lines.append(f"[警告] {w}")
         for n in self.notes:
@@ -688,7 +689,7 @@ class Survival:
 
     # -------------------------------------------------------------- 報告
     def report(self, by: str | None = None, covariates="auto") -> str:
-        lines = ["生存時間解析", self.summary().to_string(index=False)]
+        lines = ["生存時間解析", frame_text(self.summary())]
         for n in self.notes:
             lines.append(f"[注記] {n}")
         if by:

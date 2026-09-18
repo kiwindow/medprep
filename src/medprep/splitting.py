@@ -43,6 +43,7 @@ from sklearn.model_selection import (
 
 from .describe import smd_categorical, smd_continuous
 from .schema import BINARY, EVENT, GROUP, ID, NOMINAL, NUMERIC, ORDINAL, OUTCOME, Schema
+from .textfmt import frame_text
 
 TRAIN, TEST = "train", "test"
 ATTR = "medprep_split"
@@ -75,7 +76,7 @@ class SplitResult:
                  + (f"、グループ: {self.group_by}" if self.group_by else "")
                  + f"、seed={self.seed}"]
         if len(self.balance):
-            lines += ["\ntrain と test の比較:", self.balance.to_string(index=False)]
+            lines += ["\ntrain と test の比較:", frame_text(self.balance)]
         for w in self.warnings:
             lines.append(f"[警告] {w}")
         for n in self.notes:

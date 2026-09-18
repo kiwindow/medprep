@@ -3,6 +3,22 @@
 このファイルは [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) の体裁に従い、
 バージョンは [セマンティック バージョニング](https://semver.org/lang/ja/) に従う。
 
+## [0.2.1] — 2026-09-18
+
+### 修正
+- **文字で出す表の桁が、日本語の列名でずれていた。**
+  `DataFrame.to_string()` は桁を**文字数**で揃えるが、日本語は等幅フォントで
+  2 桁ぶんの幅を取る。「アルブミン(Alb)」（9 文字・幅 14）と「年齢」（2 文字・幅 4）が
+  同じ桁数として扱われ、表が崩れていた。**医学データの列名はほぼ日本語なので、
+  ずれない表のほうが珍しかった。**
+  `textfmt.frame_text()` を足し、報告のあいだだけ pandas に表示幅で揃えさせる
+  （`display.unicode.east_asian_width`。`option_context` で囲い、利用者の設定は壊さない）。
+  `schema` / `quality` / `describe` / `missing` / `outliers` / `splitting` /
+  `survival` / `timing` / `clean` のすべての報告に適用した。
+  **「全行の表示幅が同じか」をテストで見張る。**
+- あわせて、長い値を切り詰めないようにした（`to_string` には `display.max_colwidth` が
+  効かないため、引数で明示する）。「判断の根拠」「対応」は切り詰めたら意味を失う。
+
 ## [0.2.0] — 2026-09-18
 
 Phase 11（`autoprep` の結線・`paths`）と Phase 12（第3回の教材）をまとめて。

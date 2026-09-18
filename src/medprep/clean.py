@@ -20,6 +20,8 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from .textfmt import frame_text
+
 _DICT_PATH = Path(__file__).parent / "dict" / "ranges_ja.yaml"
 _LOD_RE = re.compile(r"^\s*([<>≦≧＜＞]|以下|以上|未満)?\s*([0-9.]+)\s*(.*)$")
 
@@ -56,7 +58,7 @@ class CleanReport:
         if self.unmatched:
             print("  未一致:", ", ".join(map(str, self.unmatched[:15])))
         f = self.to_frame()
-        print(f.to_string(index=False) if len(f) else "  （処理なし）")
+        print(frame_text(f) if len(f) else "  （処理なし）")
 
 
 def _to_numeric(series: pd.Series, lod_policy="half"):

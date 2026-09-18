@@ -52,6 +52,7 @@ from .schema import (
     cramers_v,
 )
 from .targets import describe_target, in_target
+from .textfmt import frame_text
 from .timing import detect_timing
 
 CONTINUOUS, CATEGORICAL = "continuous", "categorical"
@@ -384,10 +385,10 @@ class ComparisonResult:
     def report(self) -> str:
         head = (f"群間比較  {self.by} = "
                 + "、".join(f"{g}（n={self.sizes.get(g, 0)}）" for g in self.groups))
-        lines = [head, self.to_frame().to_string(index=False)]
+        lines = [head, frame_text(self.to_frame())]
         ph = self.posthoc_frame()
         if len(ph):
-            lines += ["\n事後比較:", ph.to_string(index=False)]
+            lines += ["\n事後比較:", frame_text(ph)]
         for n in self.notes:
             lines.append(f"[注記] {n}")
         return "\n".join(lines)
@@ -674,7 +675,7 @@ class TableOneResult:
         head = "Table 1"
         if self.groupby:
             head += f"（{self.groupby} で層別）"
-        lines = [head, self.table.to_string(index=False)]
+        lines = [head, frame_text(self.table)]
         for n in self.notes:
             lines.append(f"\n[注記] {n}")
         return "\n".join(lines)

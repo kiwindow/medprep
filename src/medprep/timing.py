@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from .textfmt import frame_text
+
 PRE, POST, UNKNOWN = "pre", "post", "unknown"
 
 _LABEL = {PRE: "透析前", POST: "透析後", UNKNOWN: "不詳"}
@@ -214,7 +216,7 @@ class TimingSchema:
 
     def report(self) -> str:
         p = self.pairs()
-        lines = [f"採血時点の判定（{self.source}）", p.to_string(index=False)]
+        lines = [f"採血時点の判定（{self.source}）", frame_text(p)]
         for n in self.notes:
             lines.append(f"[注記] {n}")
         return "\n".join(lines)

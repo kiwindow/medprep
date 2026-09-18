@@ -41,6 +41,7 @@ from sklearn.utils.validation import check_is_fitted
 
 from .describe import group_levels
 from .schema import NUMERIC, Schema
+from .textfmt import frame_text
 
 IQR, MAD, QUANTILE = "iqr", "mad", "quantile"
 FLAG, WINSORIZE, NAN, DROP = "flag", "winsorize", "nan", "drop"
@@ -173,11 +174,11 @@ class OutlierReport:
 
     def report(self) -> str:
         lines = [f"外れ値の検出（方法: {self.method}、扱い: {self.action}）",
-                 self.table.to_string(index=False) if len(self.table) else "  （対象列なし）"]
+                 frame_text(self.table) if len(self.table) else "  （対象列なし）"]
         if len(self.flags):
             lines.append(f"\nいずれかの列で外れ値と判定された症例: {self.n_flagged_rows} 例")
         if len(self.multivariate):
-            lines += ["\n多変量の外れ値:", self.multivariate.to_string(index=False)]
+            lines += ["\n多変量の外れ値:", frame_text(self.multivariate)]
         for n in self.notes:
             lines.append(f"[注記] {n}")
         return "\n".join(lines)

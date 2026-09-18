@@ -36,6 +36,7 @@ from scipy import stats
 
 from .describe import _adjust, _p, group_levels
 from .schema import DATETIME, NUMERIC, Schema
+from .textfmt import frame_text
 
 
 # ================================================================== 報告
@@ -57,13 +58,13 @@ class MissingReport:
         lines = [
             f"欠損の分析  {self.n_rows} 行中、欠損がまったく無い行 {self.n_complete} "
             f"（{self.complete_rate:.1%}）",
-            "\n列ごと:", self.columns.to_string(index=False),
+            "\n列ごと:", frame_text(self.columns),
         ]
         if len(self.patterns):
-            lines += ["\n欠損パターン（上位）:", self.patterns.to_string(index=False)]
+            lines += ["\n欠損パターン（上位）:", frame_text(self.patterns)]
         if len(self.signals):
             lines += ["\n★欠損が他の列と関連している（MCAR ではない）:",
-                      self.signals.to_string(index=False)]
+                      frame_text(self.signals)]
         for n in self.notes:
             lines.append(f"[注記] {n}")
         return "\n".join(lines)

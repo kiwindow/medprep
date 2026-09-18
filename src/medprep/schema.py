@@ -42,6 +42,7 @@ import yaml
 
 from .clean import build_alias_map, load_dict
 from .dates import parse_date_series
+from .textfmt import frame_text
 from .timing import UNKNOWN as TIMING_UNKNOWN
 from .timing import detect_timing
 
@@ -490,7 +491,7 @@ class Schema:
     def report(self) -> str:
         f = self.to_frame()
         lines = [f"列 {len(self.columns)} 本（残す {len(self.kept())} / 落とす {len(self.dropped())}）",
-                 f.to_string(index=False)]
+                 frame_text(f)]
         if self.target:
             lines.append(f"\n目的変数: {self.target['name']}（task={self.target.get('task')}）")
         if self.survival:

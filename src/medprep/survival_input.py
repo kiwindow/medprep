@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from .dates import parse_date_series
+from .textfmt import frame_text
 
 _UNITS = {"days": 1.0, "weeks": 7.0, "months": 30.4375, "years": 365.25}
 
@@ -70,10 +71,10 @@ class SurvivalFrame:
 
     def report(self) -> str:
         lines = [f"生存時間データ（入力形式: {self.form}、単位: {self.unit}）",
-                 self.summary().to_string(index=False)]
+                 frame_text(self.summary())]
         if len(self.excluded):
             lines.append("\n除外された症例（理由別）:")
-            lines.append(self.excluded["理由"].value_counts().to_string())
+            lines.append(frame_text(self.excluded["理由"].value_counts().to_frame("件数"), index=True))
         for w in self.warnings:
             lines.append(f"[警告] {w}")
         for nt in self.notes:

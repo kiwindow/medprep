@@ -80,7 +80,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __author__ = "Kazuhiro Iwadoh"
 __license__ = "MIT"
 
@@ -104,6 +104,7 @@ from . import (
     survival_input,
     tac,
     targets,
+    textfmt,
     timing,
     viz,
 )
@@ -175,6 +176,7 @@ from .tac import (
     urea_to_bun_mg_dl,
 )
 from .targets import achievement, describe_target, in_target
+from .textfmt import frame_text
 from .timing import POST, PRE, UNKNOWN, TimingSchema, check_requirements, detect_timing
 
 __all__ = [
@@ -183,11 +185,13 @@ __all__ = [
     "autoprep", "quicklook", "PrepResult",
     # 読み込みと保存先
     "read_any", "new_run", "RunPaths", "RunLog",
+    # 表を文字で出す（日本語の幅で桁を揃える）
+    "frame_text",
     # モジュール
     "auto", "clean", "dates", "demo", "describe", "hd", "loading", "missing",
     "outliers",
     "paths", "pipeline", "quality", "report", "schema", "splitting", "survival",
-    "survival_input", "tac", "targets", "timing", "viz",
+    "survival_input", "tac", "targets", "textfmt", "timing", "viz",
     # 列の役割とデータ品質監査
     "Schema", "ColumnSpec", "infer_column",
     "audit", "AuditReport", "Finding", "method_change_steps",
