@@ -44,6 +44,13 @@ jobs:
           # ライブラリなので uv.lock は追跡していない。何も指定しないと
           # キャッシュ鍵が固定され、一度作ったキャッシュが永久に無効化されない。
           cache-dependency-glob: "pyproject.toml"
+          # setup-uv の既定の鍵は「OS + ランナーの system python + 依存ファイル」で作られ、
+          # matrix の python は入らない。そのため同一 OS の 3 セルが同じ鍵を同時に
+          # 取り合い、1 つを除いて
+          #   Failed to save: Unable to reserve cache with key ...
+          # を出していた。cp311 と cp313 では必要な wheel も違うので、
+          # セルごとに分けるほうが正しい。
+          cache-suffix: py${{ matrix.python }}
 
       - name: 依存を解決してインストールする
         run: uv sync --extra dev --python ${{ matrix.python }}
@@ -72,6 +79,7 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
+          cache-suffix: lint
       - run: uv sync --extra dev
       - run: uv run ruff check .
 
@@ -84,6 +92,7 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
+          cache-suffix: build
       - run: uv build
       # 組み立てた wheel だけを入れて、辞書が同梱されているかを確かめる。
       # src レイアウトなので、同梱漏れはこの手順でしか出ない。

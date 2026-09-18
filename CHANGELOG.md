@@ -17,6 +17,10 @@
   毎回新しく解決される。「上流の新版で壊れた」は push の無い週にも起こるので、
   定期的に回して気づけるようにした。
 - ワークフローの既定権限を `contents: read` に絞った。
+- `cache-suffix` をジョブごとに分けた。setup-uv の既定のキャッシュ鍵には matrix の
+  Python 版が入らないため、同一 OS の 3 セルが同じ鍵を同時に取り合い
+  `Failed to save: Unable to reserve cache with key ...` を毎回出していた。
+  cp311 と cp313 では必要な wheel も違うので、セルごとに分けるほうが正しい。
 
 ### 予定
 - `schema.py` / `audit.py` — 列役割の推定、測定法変更の段差検出、採血時点の混在検出
