@@ -11,7 +11,7 @@
   8. 生理学的にあり得ない値（Hb 0、年齢 250）
   9. ID 的な高カーディナリティ文字列列（備考）
  10. 完全相関する重複列（施設 と 施設コード）
- 11. 2020年4月のALP測定法変更による段差
+ 11. 2020年4月のALP測定法変更による段差（検体採取日で前後に分かれる）
 """
 import numpy as np
 import pandas as pd
@@ -41,8 +41,14 @@ t_cens = rng.uniform(200, 2200, N)
 obs = np.minimum(t_event, t_cens)
 evt = (t_event <= t_cens).astype(int)
 
-start = pd.Timestamp("2013-01-01") + pd.to_timedelta(rng.integers(0, 1600, N), "D")
+# 登録期間を 2011-01-01 〜 2020-01 に取る。観察期間は最長 2200 日なので、
+# 観察終了は最も遅くても 2026 年初めで、未来日付は生じない。
+start = pd.Timestamp("2011-01-01") + pd.to_timedelta(rng.integers(0, 3300, N), "D")
 end = start + pd.to_timedelta(obs.round(0), "D")
+
+# 検査値は観察期間中のある 1 回の採血パネルから取ったものとする。
+# ★この日が 2020-04（ALP の JSCC→IFCC 切替）をまたぐので、段差が実際に生じる。★
+draw = start + pd.to_timedelta((obs * rng.uniform(0, 1, N)).round(0), "D")
 
 
 def fmt(ts, style):
@@ -82,12 +88,16 @@ df = pd.DataFrame({
     "カルシウム(Ca)": ca,
     "インタクトPTH(iPTH)": ipth,
     "β2マイクログロブリン(β2MG)": b2mg,
+    # ★2020-04 の測定法変更（JSCC→IFCC）で値がおよそ 1/3 になる。★
+    #   採血日で分けている。病態ではなく測定法の段差であり、audit が検出する。
     "アルカリフォスファターゼ(ALP)": np.where(
-        start.year < 2020, np.clip(rng.normal(250, 80, N), 60, 900).round(0),
+        draw < pd.Timestamp("2020-04-01"),
+        np.clip(rng.normal(250, 80, N), 60, 900).round(0),
         np.clip(rng.normal(85, 28, N), 20, 300).round(0)),
     "備考": [f"{rng.choice(['特記なし','シャント再建','入院歴あり','転院'])}_{i}" for i in range(N)],
 })
 
+df["検体採取日"] = [fmt(t, 0) for t in draw]
 df["観察開始年月日"] = [fmt(t, s) for t, s in zip(start, styles_s)]
 df["event発生年月日"] = [fmt(t, s) if e else "" for t, s, e in zip(end, styles_e, evt)]
 df["観察打ち切り年月日"] = ["" if e else fmt(t, s) for t, s, e in zip(end, styles_e, evt)]
@@ -99,6 +109,10 @@ df.loc[i[8:14], ["event発生年月日", "観察打ち切り年月日"]] = ""   
 df.loc[i[14:18], "観察開始年月日"] = ""                                      # 開始日なし
 for k in i[18:22]:                                                           # 逆転
     df.at[k, "観察開始年月日"] = fmt(end[k] + pd.Timedelta(days=30), 0)
+# 文字列の汚れを入れる列は、あらかじめ object にしておく
+#（float の列に文字列を代入すると pandas 3 でエラーになる）
+for c in ["C反応性蛋白(CRP)定量", "β2マイクログロブリン(β2MG)"]:
+    df[c] = df[c].astype(object)
 df.loc[i[22:60], "C反応性蛋白(CRP)定量"] = "<0.1"                            # 検出限界
 df.loc[i[60:95], "インタクトPTH(iPTH)"] = 999                                # 欠損コード
 df.loc[i[95:120], "β2マイクログロブリン(β2MG)"] = "未測定"

@@ -1,5 +1,6 @@
 """第3回・副次到達目標の通し検証:
-   汚れた4列形式データ → 掃除 → (duration, event) → Table 1 → KM → log-rank → Cox → PH 検定
+   汚れた4列形式データ → 列の役割の推定 → 品質監査 → 掃除 → (duration, event)
+   → Table 1 → KM → log-rank → Cox → PH 検定
 """
 import sys
 import warnings
@@ -16,6 +17,8 @@ import numpy as np
 import pandas as pd
 
 from medprep.clean import clean_numeric, derive
+from medprep.quality import audit
+from medprep.schema import Schema
 from medprep.survival_input import build_survival
 
 pd.set_option("display.width", 200)
@@ -28,18 +31,34 @@ print(f"{df.shape[0]} 行 × {df.shape[1]} 列")
 print("dtypes（汚れているため object のままの列に注目）:")
 print(df.dtypes.to_string())
 
-# ---------------------------------------------------------------- 2) 掃除
-STEP("2) 辞書駆動の掃除（検出限界・欠損コード・単位混在・あり得ない値）")
+# ---------------------------------------------------------------- 2) 列の役割
+STEP("2) 列の役割の推定（schema）— 判断を理由つきで書き出す")
+SURV = ("観察開始年月日", "event発生年月日", "観察打ち切り年月日")
+sch = Schema.infer(df, id_col="仮名ID", group="施設", survival_dates=SURV)
+print(sch.report())
+sch.to_yaml("schema.yaml")
+print("\n  → schema.yaml を保存（人が直して再実行できる）")
+
+# ---------------------------------------------------------------- 3) 監査
+STEP("3) データ品質監査（audit）— このまま解析してよいかを問う")
+aud = audit(df, sch, id_col="仮名ID", group="施設", date_col="検体採取日")
+aud.show()
+print(f"\n  致命的な所見 {len(aud.errors)} 件。"
+      + ("このまま解析してはならない。" if not aud.ok else "無し。")
+      + "以降は、除外と掃除でこれらをどう扱うかを見ていく。")
+
+# ---------------------------------------------------------------- 4) 掃除
+STEP("4) 辞書駆動の掃除（検出限界・欠損コード・単位混在・あり得ない値）")
 clean, rep = clean_numeric(df)
 rep.show()
 
-STEP("3) 派生指標の自動算出")
+STEP("5) 派生指標の自動算出")
 clean, notes = derive(clean)
 for n in notes:
     print(" -", n)
 
-# ---------------------------------------------------------------- 4) 生存時間
-STEP("4) 4列の日付 → (duration, event) への変換")
+# ---------------------------------------------------------------- 6) 生存時間
+STEP("6) 4列の日付 → (duration, event) への変換")
 sf = build_survival(
     clean,
     id_col="仮名ID",
@@ -61,8 +80,8 @@ d = sf.data.rename(columns={
 d["logCRP"] = np.log(d["CRP"] + 0.1)
 d["低Alb"] = np.where(d["Alb"] < 3.5, "Alb<3.5", "Alb≥3.5")
 
-# ---------------------------------------------------------------- 5) Table 1
-STEP("5) Table 1（低アルブミン群 vs 非低アルブミン群）")
+# ---------------------------------------------------------------- 7) Table 1
+STEP("7) Table 1（低アルブミン群 vs 非低アルブミン群）")
 from tableone import TableOne
 
 cols = ["年齢", "性別", "糖尿病", "vintage", "Hb", "CRP", "P", "補正Ca", "duration", "event"]
@@ -73,8 +92,8 @@ t1 = TableOne(d[cols + ["低Alb"]], columns=cols,
 print(t1.tabulate(tablefmt="github"))
 t1.to_excel("table1.xlsx")
 
-# ---------------------------------------------------------------- 6) KM
-STEP("6) Kaplan-Meier 曲線 + log-rank")
+# ---------------------------------------------------------------- 8) KM
+STEP("8) Kaplan-Meier 曲線 + log-rank")
 from lifelines import KaplanMeierFitter
 from lifelines.plotting import add_at_risk_counts
 from lifelines.statistics import logrank_test, multivariate_logrank_test
@@ -105,8 +124,8 @@ print(f"  多群 log-rank（施設 4 群）: χ² = {mlr.test_statistic:.2f}, p 
 plt.tight_layout(); plt.savefig("km_curves.png", dpi=150); plt.close()
 print("  → km_curves.png を保存")
 
-# ---------------------------------------------------------------- 7) Cox
-STEP("7) Cox 比例ハザード回帰")
+# ---------------------------------------------------------------- 9) Cox
+STEP("9) Cox 比例ハザード回帰")
 from lifelines import CoxPHFitter
 from lifelines.statistics import proportional_hazard_test
 
@@ -145,8 +164,8 @@ cph.plot(ax=ax); ax.set_title("多変量 Cox 回帰（log HR と 95%CI）")
 plt.tight_layout(); plt.savefig("cox_forest.png", dpi=150); plt.close()
 print("  → cox_forest.png を保存")
 
-# ---------------------------------------------------------------- 8) 真値との照合
-STEP("8) 合成データの真の係数との照合（推定が正しいことの確認）")
+# ---------------------------------------------------------------- 10) 真値との照合
+STEP("10) 合成データの真の係数との照合（推定が正しいことの確認）")
 truth = {"年齢": 0.045, "Alb": -0.85, "Hb": -0.18, "logCRP": 0.30,
          "糖尿病": 0.35, "vintage": 0.002}
 chk = pd.DataFrame({

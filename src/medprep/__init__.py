@@ -28,6 +28,14 @@
 ------
     import medprep as mp
 
+    # 列の役割を推定し、判断を理由つきで書き出す
+    sch = mp.Schema.infer(df, id_col="仮名ID", group="施設")
+    sch.to_yaml("schema.yaml")      # 人が直して再実行できる
+
+    # このまま解析してよいかを問う（audit は直さない。報告する）
+    rep = mp.audit(df, sch, id_col="仮名ID", group="施設", date_col="検体採取日")
+    rep.show()
+
     # 生存時間データ（ID / 観察開始日 / イベント発生日 / 打ち切り日 の4列）
     sf = mp.build_survival(df, id_col="仮名ID", start_date="観察開始年月日",
                            event_date="event発生年月日", censor_date="観察打ち切り年月日",
@@ -49,7 +57,7 @@ __version__ = "0.1.0"
 __author__ = "Kazuhiro Iwadoh"
 __license__ = "MIT"
 
-from . import clean, dates, hd, survival_input, tac, targets, timing
+from . import clean, dates, hd, quality, schema, survival_input, tac, targets, timing
 from .clean import CleanReport, build_alias_map, clean_numeric, derive, load_dict
 from .dates import DateParseResult, parse_date_frame, parse_date_series
 from .hd import (
@@ -69,6 +77,8 @@ from .hd import (
     tsat,
     urr,
 )
+from .quality import AuditReport, Finding, audit, method_change_steps
+from .schema import ColumnSpec, Schema, infer_column
 from .survival_input import SurvivalFrame, build_survival
 from .tac import (
     TACResult,
@@ -86,7 +96,11 @@ from .timing import POST, PRE, UNKNOWN, TimingSchema, check_requirements, detect
 __all__ = [
     "__version__",
     # モジュール
-    "clean", "dates", "hd", "survival_input", "tac", "targets", "timing",
+    "clean", "dates", "hd", "quality", "schema", "survival_input", "tac", "targets",
+    "timing",
+    # 列の役割とデータ品質監査
+    "Schema", "ColumnSpec", "infer_column",
+    "audit", "AuditReport", "Finding", "method_change_steps",
     # 日付
     "parse_date_series", "parse_date_frame", "DateParseResult",
     # 生存時間の入力

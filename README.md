@@ -69,6 +69,54 @@ Python 3.11 / 3.12 / 3.13 に対応（Windows・macOS・Linux で CI を回し�
 
 ## 使い方
 
+### 列の役割を決め、判断を書き出す
+
+```python
+import medprep as mp
+
+sch = mp.Schema.infer(df, id_col="仮名ID", group="施設",
+                      survival_dates=("観察開始年月日", "event発生年月日", "観察打ち切り年月日"))
+print(sch.report())
+sch.to_yaml("schema.yaml")     # 人が直して再実行できる
+```
+
+```
+               列名               役割   扱い      辞書  水準数    欠損率                     判断の根拠
+             仮名ID               id drop       —   600 0.0000     人が id_col として指定した
+            施設コード     duplicate_of drop       —     4 0.0000 '施設' と Cramér's V = 1.0000
+               備考 high_cardinality drop       —   600 0.0000 ユニーク率 1.00 > 0.90（…）
+            検体採取日         datetime keep       —   557 0.0000 100% の値を日付として解釈できた
+```
+
+**`reason` の無い判断を作りません。** 推定できなかった列は `unknown` にして人に返します。
+`schema.yaml` を直して再実行し、`sch.diff(edited)` で変更点を表にできます。
+
+### このまま解析してよいかを問う
+
+```python
+rep = mp.audit(df, sch, id_col="仮名ID", group="施設", date_col="検体採取日")
+rep.show()
+```
+
+```
+[✗] 採血時点: 'BUN' が透析後に下がるはずなのに、100% の症例で逆になっている（40 件）
+      対象列: 透析前BUN、透析後BUN
+      → '透析前BUN' と '透析後BUN' の取り違えを強く疑う。
+        取り違えたまま spKt/V を計算すると、透析量が過大に評価される
+
+[✗] 測定法: 'ALP' は 2020-04-01（JSCC 法 → IFCC 法）の前後で中央値が
+    246 → 91（0.37 倍、p=4.2e-33、前 539 例 / 後 61 例）と段差になっている
+      → 期間を共変量に入れるか、期間で層別すること
+```
+
+**audit は直しません。報告します。** どう直すかは人が決めることだからです。
+所見には必ず「どうすればよいか」が付きます。
+
+見ているのは、**どの列も単独では正常に見える壊れ方**です。
+同じ患者が 2 行ある／透析前後の列が入れ替わっている／白血球分画の合計が 140%／
+血清鉄が TIBC を超えている／欠測が施設に偏っている／目的変数から導かれた列が
+説明変数に残っている（リーク）。いずれも例外を出さずに通ってしまいます。
+
 ### 生存時間データを日付だけから作る
 
 観察期間を人が計算する必要はありません。**日付を入れれば済むようにしてあります。**
@@ -193,7 +241,7 @@ uv sync --extra dev
 uv run pytest          # テスト
 uv run ruff check .    # lint
 uv run python examples/make_synthetic.py   # 演習用の合成データを作る
-uv run python examples/run_e2e.py          # 掃除 → 生存時間 → Table 1 → KM → Cox の通し
+uv run python examples/run_e2e.py          # schema → audit → 掃除 → 生存時間 → Table 1 → KM → Cox
 ```
 
 `examples/make_synthetic.py` は**実データを一切含まない**合成透析コホート（600 例）を
@@ -204,9 +252,8 @@ uv run python examples/run_e2e.py          # 掃除 → 生存時間 → Table 1
 
 ## 状態
 
-土台の 7 モジュールが動き、以下は実装中です。
+土台の 9 モジュールが動き、以下は実装中です。
 
-- `schema.py` / `audit.py` — 列役割の推定、測定法変更の段差検出、採血時点の混在検出
 - `describe.py` — Table 1、群間比較、多重比較補正
 - `survival.py` — KM、log-rank、Cox、比例ハザード検定、フォレストプロット
 - `missing.py` / `outliers.py` / `pipeline.py` / `split.py`

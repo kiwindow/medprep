@@ -34,3 +34,7 @@ lab_work/
 run*/
 *.html
 !docs/**/*.html
+*.png
+!docs/**/*.png
+schema.yaml
+table1.xlsx
