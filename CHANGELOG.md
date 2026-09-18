@@ -5,6 +5,32 @@
 
 ## [Unreleased]
 
+### 追加（Phase 8）
+- `survival` — **Kaplan-Meier・log-rank・Cox 回帰・比例ハザードの検定。**
+  `survival_input` が「日付から (duration, event) を作る」ところを担い、
+  ここはその先を担う。`Survival.from_survival_frame(sf)` でつながる。
+  - `km(by=...)` — 生存曲線、at-risk 表、生存期間中央値（95%CI）、1年/3年生存率、
+    **追跡期間中央値（reverse Kaplan-Meier）**。中央値に到達しなければ **NR** と書く
+    （NaN で流さない）。信頼区間の帯は 2 群までを既定にし、at-risk 表は
+    「At risk」の行だけ出す（lifelines の既定 3 行だと 4 群で曲線が潰れる）。
+  - `logrank(by=...)` — 2群は log-rank、3群以上は多群 log-rank ＋ **対比較（Holm 補正）**。
+    順序のある群には **log-rank trend test**（lifelines に無いので自前実装。
+    2群でスコア (0,1) を与えると通常の log-rank と一致することを回帰テストで固定）。
+  - `cox(covariates="auto")` — 単変量スクリーニング（p < 0.10）→ 多変量。
+    **逐次選択（stepwise）は使わない**（選択後推論の問題）。
+    カテゴリは自動でダミー化し、**基準水準を必ず記録する**。
+    定数・分散 0・水準過多の共変量は理由つきで外す。
+  - **★ Cox の「黙って減る n」を必ず報告する ★**
+    共変量に欠測があると `CoxPHFitter` は完全ケースだけで推定する。
+    何例・何イベントが落ちたか、どの列の欠測が多いかを警告として返す。
+  - EPV < 10 の警告、信頼区間が極端に広い変数（完全分離の兆候）の警告、
+    lifelines の `ConvergenceWarning` を握り潰さず結果に取り込む。
+  - `check_ph()` — Schoenfeld 残差による検定。違反があれば
+    **どうすればよいか**（層別化 / 時間依存項 / RMST）を名前で挙げる。
+  - `rmst(by=..., t=...)` — 制限付き平均生存時間。**比例ハザードが成り立たないときの逃げ道。**
+  - `forest()` — ハザード比のフォレストプロット（対数軸を素の数で目盛る）。
+  - `schoenfeld_plot()` — 残差の図。「違反」と言われたらまず形を見る。
+
 ### 追加（Phase 7）
 - `describe` — **記述統計・Table 1・群間比較・管理目標の達成率。**
   表を出すだけでなく、**どの検定をなぜ選んだか**を「判定の根拠」列に残す。
@@ -93,7 +119,6 @@
   cp311 と cp313 では必要な wheel も違うので、セルごとに分けるほうが正しい。
 
 ### 予定
-- `survival.py` — KM、log-rank、Cox、比例ハザード検定、フォレストプロット
 - `missing.py` / `outliers.py` / `pipeline.py` / `split.py`
 - `viz.py` / `report.py` — 単一ファイルの HTML レポート
 - `autoprep()` — 全自動 1 行の結線

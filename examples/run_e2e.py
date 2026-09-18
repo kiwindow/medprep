@@ -11,7 +11,6 @@ sys.path.insert(0, ".")
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import matplotlib_fontja  # noqa: F401  日本語フォント
 import numpy as np
 import pandas as pd
@@ -21,6 +20,7 @@ from medprep.clean import clean_numeric, derive
 from medprep.describe import compare_groups, table_one, target_achievement, target_summary
 from medprep.quality import audit
 from medprep.schema import Schema
+from medprep.survival import Survival
 from medprep.survival_input import build_survival
 
 pd.set_option("display.width", 200)
@@ -117,86 +117,41 @@ for key, col in [("P", "無機リン(P)"), ("cCa", "補正Ca"), ("Hb", "末梢�
           f"  → 差 {b - a:+.1%}（{int((wrong[ok] != right[ok]).sum())} 例）")
 
 # ---------------------------------------------------------------- 9) KM
-STEP("9) Kaplan-Meier 曲線 + log-rank")
-from lifelines import KaplanMeierFitter
-from lifelines.plotting import add_at_risk_counts
-from lifelines.statistics import logrank_test, multivariate_logrank_test
+STEP("9) Kaplan-Meier 曲線 + log-rank（medprep.survival）")
+surv = Survival(d, unit="years")
+km = surv.km(by="低Alb", title="アルブミン値による生存曲線", save="km_alb.png")
+print(km.report())
+print("\n" + surv.logrank(by="低Alb").report())
+print("  → km_alb.png を保存")
 
-fig, axes = plt.subplots(1, 2, figsize=(13, 5))
-fitters = []
-for g, sub in d.groupby("低Alb"):
-    km = KaplanMeierFitter(label=f"{g} (n={len(sub)})")
-    km.fit(sub["duration"], sub["event"])
-    km.plot_survival_function(ax=axes[0], ci_show=True)
-    fitters.append(km)
-    med = km.median_survival_time_
-    print(f"  {g:10s} n={len(sub):3d} events={int(sub.event.sum()):3d} "
-          f"生存期間中央値={'NR' if not np.isfinite(med) else f'{med:.2f} 年'}")
-add_at_risk_counts(*fitters, ax=axes[0])
-axes[0].set_title("アルブミン値による生存曲線"); axes[0].set_xlabel("観察期間（年）")
-
-a = d[d["低Alb"] == "Alb<3.5"]; b = d[d["低Alb"] == "Alb≥3.5"]
-lr = logrank_test(a["duration"], b["duration"], a["event"], b["event"])
-print(f"\n  log-rank 検定: χ² = {lr.test_statistic:.2f}, p = {lr.p_value:.3g}")
-
-for g, sub in d.groupby("施設"):
-    km = KaplanMeierFitter(label=f"{g} (n={len(sub)})")
-    km.fit(sub["duration"], sub["event"]); km.plot_survival_function(ax=axes[1], ci_show=False)
-axes[1].set_title("施設別の生存曲線"); axes[1].set_xlabel("観察期間（年）")
-mlr = multivariate_logrank_test(d["duration"], d["施設"], d["event"])
-print(f"  多群 log-rank（施設 4 群）: χ² = {mlr.test_statistic:.2f}, p = {mlr.p_value:.3g}")
-plt.tight_layout(); plt.savefig("km_curves.png", dpi=150); plt.close()
-print("  → km_curves.png を保存")
+km2 = surv.km(by="施設", title="施設別の生存曲線", save="km_facility.png")
+print("\n" + km2.report())
+print("\n" + surv.logrank(by="施設").report())
+print("  → km_facility.png を保存")
 
 # ---------------------------------------------------------------- 10) Cox
-STEP("10) Cox 比例ハザード回帰")
-from lifelines import CoxPHFitter
-from lifelines.statistics import proportional_hazard_test
-
+STEP("10) Cox 比例ハザード回帰（medprep.survival）")
 cov = ["年齢", "Alb", "Hb", "logCRP", "糖尿病", "vintage"]
-print("単変量スクリーニング:")
-uni = []
-for c in cov:
-    sub = d[["duration", "event", c]].dropna()
-    m = CoxPHFitter().fit(sub, "duration", "event")
-    r = m.summary.loc[c]
-    uni.append((c, r["exp(coef)"], r["exp(coef) lower 95%"], r["exp(coef) upper 95%"], r["p"]))
-u = pd.DataFrame(uni, columns=["変数", "HR", "95%CI下限", "95%CI上限", "p"])
-print(u.round(3).to_string(index=False))
+cox = surv.cox(covariates=cov)
+print(cox.report())
+surv.forest(cox, save="cox_forest.png")
+surv.schoenfeld_plot(cox, save="cox_schoenfeld.png")
+print("\n  → cox_forest.png / cox_schoenfeld.png を保存")
 
-fit = d[["duration", "event"] + cov].dropna()
-n_ev = int(fit["event"].sum())
-print(f"\n多変量 Cox: n = {len(fit)}, イベント = {n_ev}, 共変量 = {len(cov)}, "
-      f"EPV = {n_ev/len(cov):.1f}" + ("  ← EPV<10 なら警告" if n_ev/len(cov) < 10 else "  （EPV≥10: 可）"))
-cph = CoxPHFitter().fit(fit, "duration", "event")
-s = cph.summary[["exp(coef)", "exp(coef) lower 95%", "exp(coef) upper 95%", "p"]]
-s.columns = ["HR", "95%CI下限", "95%CI上限", "p"]
-print(s.round(3).to_string())
-print(f"\n  C-index = {cph.concordance_index_:.3f}")
-
-print("\n比例ハザード仮定の検定（Schoenfeld 残差, time_transform='rank'）:")
-ph = proportional_hazard_test(cph, fit, time_transform="rank")
-pht = ph.summary.round(3)
-print(pht.to_string())
-viol = pht[pht["p"] < 0.05].index.tolist()
-print("  → " + ("違反なし（全て p ≥ 0.05）" if not viol
-                else f"★PH 仮定違反: {viol} — 層別化または時間依存項を検討すること"))
-
-# フォレストプロット
-fig, ax = plt.subplots(figsize=(7, 4))
-cph.plot(ax=ax); ax.set_title("多変量 Cox 回帰（log HR と 95%CI）")
-plt.tight_layout(); plt.savefig("cox_forest.png", dpi=150); plt.close()
-print("  → cox_forest.png を保存")
+if cox.ph_violations:
+    print("\n  PH 違反があったので RMST（比例ハザードを仮定しない指標）も出す:")
+    print(surv.rmst(by="低Alb", t=3.0).to_string(index=False))
 
 # ---------------------------------------------------------------- 11) 真値との照合
 STEP("11) 合成データの真の係数との照合（推定が正しいことの確認）")
 truth = {"年齢": 0.045, "Alb": -0.85, "Hb": -0.18, "logCRP": 0.30,
          "糖尿病": 0.35, "vintage": 0.002}
+m = cox.model
 chk = pd.DataFrame({
     "真の係数": pd.Series(truth),
-    "推定係数": cph.params_,
-    "95%CI下限": cph.confidence_intervals_.iloc[:, 0],
-    "95%CI上限": cph.confidence_intervals_.iloc[:, 1]})
+    "推定係数": m.params_,
+    "95%CI下限": m.confidence_intervals_.iloc[:, 0],
+    "95%CI上限": m.confidence_intervals_.iloc[:, 1]})
 chk["CIに真値を含む"] = (chk["95%CI下限"] <= chk["真の係数"]) & (chk["真の係数"] <= chk["95%CI上限"])
 print(chk.round(3).to_string())
 print(f"\n  {int(chk['CIに真値を含む'].sum())}/{len(chk)} の変数で 95%CI が真値を含む")

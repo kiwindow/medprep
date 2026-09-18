@@ -46,6 +46,13 @@
                            unit="years")
     print(sf.report())
 
+    # 生存時間解析（KM・log-rank・Cox・比例ハザードの検定）
+    s = mp.Survival.from_survival_frame(sf)
+    s.km(by="施設", save="km.png")
+    print(s.logrank(by="施設").report())
+    cox = s.cox(covariates="auto")      # 欠測で何例落ちたかを必ず報告する
+    print(cox.report())
+
     # 辞書駆動の掃除
     clean, rep = mp.clean_numeric(df)
     rep.show()
@@ -68,6 +75,7 @@ from . import (
     hd,
     quality,
     schema,
+    survival,
     survival_input,
     tac,
     targets,
@@ -105,6 +113,13 @@ from .hd import (
 )
 from .quality import AuditReport, Finding, audit, method_change_steps
 from .schema import ColumnSpec, Schema, infer_column
+from .survival import (
+    CoxResult,
+    KMResult,
+    LogRankResult,
+    Survival,
+    logrank_trend,
+)
 from .survival_input import SurvivalFrame, build_survival
 from .tac import (
     TACResult,
@@ -122,8 +137,8 @@ from .timing import POST, PRE, UNKNOWN, TimingSchema, check_requirements, detect
 __all__ = [
     "__version__",
     # モジュール
-    "clean", "dates", "describe", "hd", "quality", "schema", "survival_input", "tac",
-    "targets", "timing",
+    "clean", "dates", "describe", "hd", "quality", "schema", "survival",
+    "survival_input", "tac", "targets", "timing",
     # 列の役割とデータ品質監査
     "Schema", "ColumnSpec", "infer_column",
     "audit", "AuditReport", "Finding", "method_change_steps",
@@ -131,6 +146,8 @@ __all__ = [
     "parse_date_series", "parse_date_frame", "DateParseResult",
     # 生存時間の入力
     "build_survival", "SurvivalFrame",
+    # 生存時間解析
+    "Survival", "KMResult", "LogRankResult", "CoxResult", "logrank_trend",
     # 掃除
     "clean_numeric", "derive", "load_dict", "build_alias_map", "CleanReport",
     # 採血時点

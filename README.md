@@ -198,6 +198,36 @@ sf.excluded    # 除外された症例（ID・理由・入力されていた元�
 イベント日と打ち切り日の**両方が入っている矛盾**、どちらも空欄、日付の逆転、
 未来日付、観察期間 0 を検出し、症例ごとに理由を付けて除外します。
 
+### 生存時間解析 — 黙って減る n を見張る
+
+```python
+s = mp.Survival.from_survival_frame(sf)
+s.km(by="施設", save="km.png")
+print(s.logrank(by="施設").report())
+cox = s.cox(covariates=["年齢", "Alb", "Hb", "logCRP", "糖尿病", "vintage"])
+print(cox.report())
+s.forest(cox, save="forest.png")
+```
+
+```
+Cox 比例ハザード回帰  n = 508、イベント = 203、共変量 = 6、EPV = 33.8
+欠測により除外: 70 例（うちイベント 24 件）
+
+[警告] 共変量の欠測により 70 例（イベント 24 件）が解析から落ちた（578 → 508）。
+       欠測の多い列: Alb: 49、vintage: 15、年齢: 3。
+       Cox は完全ケースだけで推定するので、**共変量を足すと n が黙って減る**。
+
+[警告] 比例ハザード仮定に違反している変数がある（['logCRP']）。
+       (1) その変数で層別する cox(strata='...')、(2) 時間依存項を入れる、
+       (3) RMST に切り替える rmst(by='...')、のいずれかを選ぶこと
+```
+
+**「p < 0.05 でした」で終わらせません。** 何をすればよいかまで書きます。
+
+生存期間中央値に到達しない群は NaN ではなく **NR** と表示します
+（「生存が良い」ではなく「追跡期間が足りない」という事実です）。
+順序のある群には log-rank trend test も出します。
+
 ### 辞書駆動でデータを掃除する
 
 ```python
@@ -288,7 +318,7 @@ uv sync --extra dev
 uv run pytest          # テスト
 uv run ruff check .    # lint
 uv run python examples/make_synthetic.py   # 演習用の合成データを作る
-uv run python examples/run_e2e.py          # schema → audit → 掃除 → 生存時間 → Table 1 → 管理目標 → KM → Cox
+uv run python examples/run_e2e.py          # schema → audit → 掃除 → 生存時間 → Table 1 → 管理目標 → KM → Cox（全 11 段）
 ```
 
 `examples/make_synthetic.py` は**実データを一切含まない**合成透析コホート（600 例）を
@@ -299,9 +329,8 @@ uv run python examples/run_e2e.py          # schema → audit → 掃除 → 生
 
 ## 状態
 
-土台の 10 モジュールが動き、以下は実装中です。
+土台の 11 モジュールが動き、以下は実装中です。
 
-- `survival.py` — KM、log-rank、Cox、比例ハザード検定、フォレストプロット
 - `missing.py` / `outliers.py` / `pipeline.py` / `split.py`
 - `viz.py` / `report.py` — 単一ファイルの HTML レポート
 - `autoprep()` — 全自動 1 行の結線
