@@ -239,3 +239,76 @@ def test_the_survival_frame_carries_the_covariates():
     cols = set(rep.survival.data.columns)
     assert {"duration", "event"} <= cols
     assert {"年齢", "施設"} <= cols
+
+
+# ---------------------------------------------------------------- 減らしたもの
+def test_it_records_what_it_removed():
+    """★何を捨てたかを言わない自動化は、信用してはならない。★"""
+    df = frame()
+    df.loc[df.index[:12], "転帰"] = np.nan          # 目的変数の欠測 → 行が減る
+    df["連番"] = range(len(df))                     # 使われない列
+    rep = run(df, outcome="転帰", task="classification")
+    r = rep.removed
+    assert set(r.columns) == {"種類", "対象", "件数", "理由", "段"}
+    assert (r["理由"].astype(str).str.len() > 0).all()      # 理由の無い行を作らない
+
+    # 列：ID は解析から外れ、その理由が書いてある
+    col = r[r["種類"] == "列"]
+    assert "仮名ID" in set(col["対象"])
+    assert "id_col" in col.loc[col["対象"] == "仮名ID", "理由"].iloc[0]
+
+    # 行：目的変数の欠測を除いた数が一致する
+    row = r[(r["種類"] == "行")]
+    assert int(row["件数"].sum()) == 12
+
+
+def test_removed_is_empty_when_nothing_was_removed():
+    df = pd.DataFrame({"年齢": [60, 70, 80], "Alb": [3.1, 3.5, 4.0]})
+    rep = mp.autoprep(df, verbose=False)
+    assert rep.removed is not None and len(rep.removed) == 0
+
+
+def test_cleaned_values_are_counted_as_removed():
+    """辞書で NaN にした値も「減らしたもの」である（行は消えないが、値は消える）。"""
+    df = frame()
+    df["インタクトPTH(iPTH)"] = 999.0                # 欠損コード
+    rep = run(df)
+    val = rep.removed[rep.removed["種類"] == "値"]
+    assert len(val) and "999" in " ".join(val["理由"])
+
+
+def test_the_report_text_lists_what_was_removed():
+    df = frame()
+    df.loc[df.index[:5], "転帰"] = np.nan
+    rep = run(df, outcome="転帰", task="classification")
+    assert "減らしたもの" in rep.report()
+
+
+def test_the_html_report_has_a_removed_section():
+    df = frame()
+    df.loc[df.index[:5], "転帰"] = np.nan
+    rep = run(df, outcome="転帰", task="classification")
+    assert "減らしたもの" in rep.html.to_html()
+
+
+# ---------------------------------------------------------------- データの書き出し
+def test_save_writes_the_cleaned_and_prepared_data(isolated):
+    rep = run(outcome="転帰", task="classification", save=True)
+    d = os.path.join(rep.run.run, "data")
+    for name in ("掃除済みデータ.xlsx", "前処理済み_train.xlsx", "前処理済み_test.xlsx"):
+        assert os.path.exists(os.path.join(d, name)), name
+    assert os.path.exists(rep.run.file("table", "除外の記録.xlsx"))
+
+
+def test_the_prepared_file_carries_the_outcome_column(isolated):
+    rep = run(outcome="転帰", task="classification", save=True)
+    tr = pd.read_excel(os.path.join(rep.run.run, "data", "前処理済み_train.xlsx"))
+    assert "転帰" in tr.columns
+    assert len(tr) == len(rep.X_train)
+    assert list(tr.columns)[:-1] == list(rep.X_train.columns)
+
+
+def test_save_data_can_be_turned_off(isolated):
+    """★症例レベルのデータである。要らないなら書かない。★"""
+    rep = run(outcome="転帰", task="classification", save=True, save_data=False)
+    assert not os.path.exists(os.path.join(rep.run.run, "data"))

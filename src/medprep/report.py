@@ -139,6 +139,7 @@ def build_report(
     title: str = "前処理レポート",
     subtitle: str = "",
     audit=None,
+    removed=None,
     missing=None,
     outliers=None,
     table1=None,
@@ -189,6 +190,19 @@ def build_report(
         if audit.skipped:
             s.table(pd.DataFrame(audit.skipped, columns=["実施できなかった検査", "理由"]),
                     caption="実施できなかった検査")
+
+    # --- 減らしたもの（★何を捨てたかを言わない自動化は信用してはならない★）
+    if removed is not None and len(removed):
+        s = rep.section("1b. 減らしたもの")
+        col = int((removed["種類"] == "列").sum())
+        row = int(removed.loc[removed["種類"] == "行", "件数"].sum())
+        val = int(removed.loc[removed["種類"] == "値", "件数"].sum())
+        s.text(f"<b>列 {col} 本 / 行 {row} 例 / 値 {val} 個（NaN 化）を減らした。</b>"
+               "それぞれ理由を付けてある。", kind="html")
+        s.text("行の削除は段によって効く範囲が違う。"
+               "「生存時間の形にする」で除いた例は生存時間解析にだけ効き、"
+               "モデルに渡す行列には影響しない。", kind="note")
+        s.table(removed, caption="減らしたものの一覧", max_rows=300)
 
     # --- schema
     if schema is not None:

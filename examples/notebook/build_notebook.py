@@ -197,7 +197,7 @@ code("""
 # ★このノートブックが必要とする medprep の版★
 #   古い medprep が入っていると、あとのセルが AttributeError で止まる。
 #   ここで版を確かめて、足りなければ**理由を言って止める**。
-REQUIRED_MEDPREP = (0, 2, 0)
+REQUIRED_MEDPREP = (0, 3, 0)
 
 if IN_COLAB:
     # -U（更新）と --no-cache-dir を付ける。付けないと、同じ版番号のまま
@@ -392,6 +392,49 @@ rep = mp.autoprep(
 code("""
 # 段ごとの成否と、人の確認が要る事項
 rep.show()
+""")
+
+md("""
+## 何を減らしたか
+
+**全自動の値打ちは「何をしたか」と同じくらい「何を捨てたか」で決まる。**
+捨てたものを言わない自動化は、信用してはならない。
+
+| 種類 | 何が減るか |
+|---|---|
+| **列** | ID・重複列・自由記載は解析から外す。日付は特徴量にしない |
+| **行** | 目的変数が欠測の症例、生存時間に変換できない症例 |
+| **値** | 欠損コード（999）・あり得ない値を NaN にする（★行は消えない★） |
+
+行の削除は**段によって効く範囲が違う**。「生存時間の形にする」で除いた例は
+生存時間解析にだけ効き、モデルに渡す行列には影響しない。
+""")
+
+code("""
+rep.removed
+""")
+
+md("""
+## 書き出されたもの
+
+`save=True` なので、`run{N}/` 以下にすべて保存されている。
+
+| 場所 | 中身 |
+|---|---|
+| `data/掃除済みデータ.xlsx` | 辞書で掃除し派生列を足した、**人が読める**データ |
+| `data/前処理済み_train.xlsx` / `_test.xlsx` | スケール・符号化まで済んだ、**モデルに渡す**行列<br>（**目的変数を指定したときだけ**。ここではまだ出ない → 演習⑥で出る） |
+| `table/除外の記録.xlsx` | 上の「減らしたもの」の一覧 |
+| `model/schema.yaml` | ★再現性の中核★ 列の役割と、そう判断した理由 |
+| `model/pipeline.pkl` | fit 済みの前処理（新しい症例に同じ変換を当てられる） |
+| `report/prep_report.html` | すべてをまとめた HTML 1 枚 |
+
+**`data/` は症例レベルのデータである。** 置き場所の根には毎回 `.gitignore` を入れているが、
+人に渡すときは中身を確かめること。要らなければ `save_data=False` を渡す。
+""")
+
+code("""
+for f in rep.saved:
+    print(' ', f)
 """)
 
 md("""
@@ -779,8 +822,22 @@ md("""
 code("""
 print(rep2.run.report_text())
 print()
-for p in rep2.saved:
-    print(' ', p)
+for f in rep2.saved:
+    print(' ', f)
+""")
+
+md("""
+ここで初めて **`data/前処理済み_train.xlsx` / `_test.xlsx`** が出る。
+目的変数を決めて分割したときだけ、モデルに渡す行列が確定するからである。
+
+この xlsx は `rep2.X_train` と同じもの（末尾に目的変数の列が付く）。
+別のノートブックに渡すならこれを読む。**ただし再現に要るのは `schema.yaml` と
+`pipeline.pkl` のほうである。** 前処理済みの xlsx だけを回すと、
+数か月後に「この列は何だったか」が分からなくなる。
+""")
+
+code("""
+rep2.removed
 """)
 
 # ================================================================= 第3部
@@ -835,7 +892,7 @@ nb = {
     "nbformat": 4,
     "nbformat_minor": 0,
 }
-VERSION = "Ver1_1"
+VERSION = "Ver1_2"
 out = str(pathlib.Path(__file__).resolve().parent / f"Preprocessing_{VERSION}.ipynb")
 with open(out, "w", encoding="utf-8") as f:
     json.dump(nb, f, ensure_ascii=False, indent=1)

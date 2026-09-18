@@ -415,6 +415,13 @@ class Preprocessor:
         d = self.design
         return list(d["numeric"]) + list(d["ordinal"]) + list(d["categorical"])
 
+    def input_columns(self) -> list:
+        """前処理に**実際に投入した**元の列（変換後の列名ではない）。
+
+        「どの列が特徴量にならなかったか」を数えるのに要る。
+        """
+        return self._needed()
+
     # -------------------------------------------------------------- 参照
     def reference_levels(self) -> dict:
         """one-hot で基準にした（＝列を作らなかった）水準。

@@ -43,6 +43,7 @@ from .report import build_report
 from .schema import DATETIME, Schema
 from .splitting import split
 from .survival_input import build_survival
+from .textfmt import frame_text
 
 __version_note__ = "Phase 11"
 
@@ -70,6 +71,8 @@ class PrepResult:
     html: object = None                    # Report
     run: _paths.RunPaths | None = None
     log: _paths.RunLog | None = None
+    removed: pd.DataFrame | None = None     # 何を、いくつ、なぜ減らしたか
+    dropped_outcome: dict = field(default_factory=dict)
     warnings: list = field(default_factory=list)
     notes: list = field(default_factory=list)
     steps: list = field(default_factory=list)      # (段, 成否, 一言)
@@ -109,6 +112,18 @@ class PrepResult:
         for name, ok, detail in self.steps:
             mark = "・" if ok else "—"
             lines.append(f"  {mark} {name}" + (f"  {detail}" if detail else ""))
+
+        if self.removed is not None and len(self.removed):
+            col = self.removed[self.removed["種類"] == "列"]
+            row = self.removed[self.removed["種類"] == "行"]
+            val = self.removed[self.removed["種類"] == "値"]
+            lines.append(
+                f"\n減らしたもの: 列 {len(col)} 本 / 行 {int(row['件数'].sum())} 例 / "
+                f"値 {int(val['件数'].sum())} 個（NaN 化）")
+            lines.append(frame_text(self.removed))
+            lines.append("（行の削除は段によって効く範囲が違う。"
+                         "『生存時間の形にする』は生存時間解析にだけ効き、"
+                         "モデルに渡す行列には影響しない）")
 
         if self.warnings:
             lines.append(f"\n★人の確認が要る事項 {len(self.warnings)} 件★"
@@ -162,6 +177,7 @@ def autoprep(
     do_table1: bool = True,
     do_figures: bool = True,
     save: bool = False,
+    save_data: bool = True,
     method: str = "Preprocessing",
     project_folder: str = "",
     out_dir: str | None = None,
@@ -181,6 +197,9 @@ def autoprep(
     survival_dates : (観察開始日, イベント発生日, 打ち切り日) の 3 列
     do_split : "auto" なら `outcome` があるときだけ分割して前処理まで行う
     save : True なら `~/lab_output/{method}/run{N}/` 以下に全出力を保存する
+    save_data : `save=True` のとき、掃除済みデータと前処理済み行列も書き出す。
+        ★これは症例レベルのデータである。★ 置き場所には `.gitignore` を必ず置くが、
+        受け渡しには注意すること。要らなければ False。
     """
     t0 = time.time()
     res = PrepResult()
@@ -316,6 +335,7 @@ def autoprep(
         dfs = dfc
         if outcome in dfs.columns and dfs[outcome].isna().any():
             dfs, info = drop_missing_outcome(dfs, outcome)
+            res.dropped_outcome = info
             step("目的変数の欠測を除く", True,
                  f"{info['残り']} 例（判定できない {info['除外']} 例を除外）")
             warn(f"目的変数 '{outcome}' の欠測 {info['除外']} 例を除外した"
@@ -345,6 +365,15 @@ def autoprep(
     elif want_split:
         step("train / test に分ける", False, "outcome が指定されていない")
 
+    # -------------------------------------------------------- 11.5) 減らしたものの記録
+    #   ★何を捨てたかを言わない自動化は、信用してはならない。★
+    res.removed = _removed_table(res, dfc, outcome)
+    n_col = int((res.removed["種類"] == "列").sum()) if len(res.removed) else 0
+    n_row = int(res.removed.loc[res.removed["種類"] == "行", "件数"].sum()) \
+        if len(res.removed) else 0
+    step("減らしたものを数える", True,
+         f"列 {n_col} 本 / 行 {n_row} 例（rep.removed に一覧）")
+
     # -------------------------------------------------------- 12) 図
     if do_figures:
         res.figures = viz.overview(
@@ -361,7 +390,8 @@ def autoprep(
     # -------------------------------------------------------- 14) 保存
     if save:
         _save_all(res, method=method, project_folder=project_folder,
-                  out_dir=out_dir, source=source, step=step, t0=t0)
+                  out_dir=out_dir, source=source, step=step, t0=t0,
+                  save_data=save_data)
     res.seconds = time.time() - t0
 
     if verbose:
@@ -392,7 +422,8 @@ def _build_html(res: PrepResult, *, title=None, show_values=False, source="", **
         res.schema,
         title=title or "前処理レポート",
         subtitle=sub,
-        audit=res.audit, missing=res.missing, outliers=res.outliers,
+        audit=res.audit, removed=res.removed, missing=res.missing,
+        outliers=res.outliers,
         table1=res.table1,
         comparison=getattr(res.table1, "comparison", None),
         achievement=res.achievement,
@@ -401,7 +432,8 @@ def _build_html(res: PrepResult, *, title=None, show_values=False, source="", **
         figures=res.figures, show_values=show_values, **kwargs)
 
 
-def _save_all(res: PrepResult, *, method, project_folder, out_dir, source, step, t0):
+def _save_all(res: PrepResult, *, method, project_folder, out_dir, source, step, t0,
+              save_data=True):
     """`run{N}/` 以下に全部書き出す（構想 §7 の保存規約）。"""
     p = _paths.new_run(method, project_folder=project_folder, output_dir=out_dir)
     res.run = p
@@ -436,6 +468,14 @@ def _save_all(res: PrepResult, *, method, project_folder, out_dir, source, step,
         put(p.file("table", "prep_tables.xlsx"), res.html.to_excel)
     if res.table1 is not None:
         put(p.file("table", "table1.xlsx"), res.table1.to_excel)
+    if res.removed is not None:
+        put(p.file("table", "除外の記録.xlsx"),
+            lambda q: res.removed.to_excel(q, index=False))
+
+    # --- data/ ： ★症例レベルのデータ★
+    if save_data:
+        _save_data(res, p, put)
+
     _paths.write_run_info(p, {"medprep_version": _pkg_version()})
     res.saved.append(p.file("table", "run_info.json"))
 
@@ -462,6 +502,98 @@ def _save_all(res: PrepResult, *, method, project_folder, out_dir, source, step,
     })
     res.saved.append(res.log.path)
     step("run フォルダに保存する", True, f"run{p.runnumber}  {p.run}")
+
+
+def _save_data(res: PrepResult, p, put) -> None:
+    """掃除済みデータと前処理済み行列を書き出す。
+
+    **2 つは別ものである。**
+      掃除済み  … 辞書で掃除し派生列を足した、**人が読める**データ
+      前処理済み … スケール・符号化まで済ませた、**モデルに渡す**行列
+
+    ★どちらも症例レベルのデータである。★ `run` の根には `.gitignore` を必ず置いているが、
+    人に渡すときは中身を確かめること。
+    """
+    import os
+    d = os.path.join(p.run, "data")
+    os.makedirs(d, exist_ok=True)
+
+    if res.df_clean is not None:
+        put(os.path.join(d, "掃除済みデータ.xlsx"),
+            lambda q: res.df_clean.to_excel(q, index=False))
+
+    if res.prepared is None:
+        return
+    name = (res.schema.target or {}).get("name") if res.schema else None
+
+    def _with_y(x, y):
+        return x if (y is None or name is None) else x.assign(**{name: y})
+
+    put(os.path.join(d, "前処理済み_train.xlsx"),
+        lambda q: _with_y(res.X_train, res.y_train).to_excel(q, index=False))
+    put(os.path.join(d, "前処理済み_test.xlsx"),
+        lambda q: _with_y(res.X_test, res.y_test).to_excel(q, index=False))
+
+
+def _removed_table(res: PrepResult, dfc, outcome) -> pd.DataFrame:
+    """**何を、いくつ、なぜ減らしたか**を 1 枚の表にする。
+
+    全自動の値打ちは「何をしたか」と同じくらい「何を捨てたか」で決まる。
+    捨てたものを言わない自動化は、信用してはならない。
+    """
+    rows = []
+
+    # --- 列：役割の推定で解析から外したもの
+    if res.schema is not None:
+        for c in res.schema.dropped():
+            spec = res.schema.columns[c]
+            rows.append({"種類": "列", "対象": str(c), "件数": 1,
+                         "理由": spec.reason, "段": f"列の役割の推定（{spec.role}）"})
+
+        # --- 列：残したが前処理に投入しなかったもの（日付・目的変数・生存時間の 2 列）
+        if res.prepared is not None and res.prepared.preprocessor is not None:
+            used = set(res.prepared.preprocessor.input_columns())
+            for c in res.schema.kept():
+                if c in used or c == outcome:
+                    continue
+                spec = res.schema.columns[c]
+                rows.append({"種類": "列", "対象": str(c), "件数": 1,
+                             "理由": f"役割 {spec.role} は特徴量にしない"
+                                   f"（日付・生存時間の列はそのままでは説明変数にならない）",
+                             "段": "前処理"})
+
+    # --- 行：目的変数の欠測
+    if res.dropped_outcome:
+        info = res.dropped_outcome
+        if info.get("除外"):
+            rows.append({"種類": "行", "対象": f"目的変数 '{outcome}' が欠測",
+                         "件数": int(info["除外"]),
+                         "理由": str(info.get("理由", "")).splitlines()[0],
+                         "段": "分割の前"})
+
+    # --- 行：生存時間に変換できなかったもの
+    sf = res.survival
+    if sf is not None and len(getattr(sf, "excluded", [])):
+        for reason, n in sf.excluded["理由"].value_counts().items():
+            rows.append({"種類": "行", "対象": "生存時間に変換できない",
+                         "件数": int(n), "理由": str(reason),
+                         "段": "生存時間の形にする"})
+
+    # --- 値：辞書で掃除して NaN にしたもの（行は消えない。値だけが消える）
+    if res.clean_report is not None:
+        for col, kind, n, detail in res.clean_report.actions:
+            if "NaN" in str(kind) and n:
+                rows.append({"種類": "値", "対象": str(col), "件数": int(n),
+                             "理由": f"{kind}（{detail}）", "段": "辞書で掃除"})
+
+    cols = ["種類", "対象", "件数", "理由", "段"]
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    out = pd.DataFrame(rows, columns=cols)
+    order = {"列": 0, "行": 1, "値": 2}
+    return (out.assign(_o=out["種類"].map(order))
+               .sort_values(["_o", "件数"], ascending=[True, False])
+               .drop(columns="_o").reset_index(drop=True))
 
 
 def _write_version(path) -> None:
