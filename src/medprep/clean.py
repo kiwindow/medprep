@@ -250,8 +250,16 @@ def derive(df: pd.DataFrame, dic: dict | None = None) -> tuple[pd.DataFrame, lis
 
     if has("Ca", "Alb") and "cCa" not in col_of:
         ca, alb = out[col_of["Ca"]], out[col_of["Alb"]]
-        out["補正Ca"] = np.where(alb < 4.0, ca + (4.0 - alb), ca)
-        notes.append("補正Ca を Payne 式で算出した（Alb<4.0 のとき Ca+(4.0-Alb)）")
+        # ★Alb が欠測なら補正Ca は「算出不能」であって Ca ではない。★
+        #   np.where(np.nan < 4.0, ...) は False に落ちるので、そのまま書くと
+        #   **補正されていない Ca が補正Ca として黙って混ざる**。
+        #   達成率も回帰係数も、その分だけ静かにずれる。
+        cca = np.where(alb < 4.0, ca + (4.0 - alb), ca)
+        n_unknown = int(alb.isna().sum())
+        out["補正Ca"] = pd.Series(cca, index=out.index).mask(alb.isna() | ca.isna())
+        notes.append("補正Ca を Payne 式で算出した（Alb<4.0 のとき Ca+(4.0-Alb)）"
+                     + (f"。Alb が欠測の {n_unknown} 例は算出不能として NaN にした"
+                        if n_unknown else ""))
         col_of["cCa"] = "補正Ca"
     if has("cCa", "P"):
         out["補正Ca×P"] = out[col_of["cCa"]] * out[col_of["P"]]

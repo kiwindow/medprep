@@ -1,6 +1,7 @@
 """辞書駆動の掃除。実測の正常値を「補正」してしまわないことを確かめる。"""
 import numpy as np
 import pandas as pd
+import pytest
 
 from medprep.clean import clean_numeric, derive
 
@@ -54,3 +55,35 @@ def test_unmatched_columns_are_reported_not_silently_ignored():
     df = pd.DataFrame({"謎の列": [1, 2, 3], "年齢": [60, 70, 80]})
     _, rep = clean_numeric(df)
     assert "謎の列" in rep.unmatched and "年齢" in rep.matched
+
+
+# ---------------------------------------------------------------- 派生指標
+def test_corrected_calcium_is_not_computed_when_albumin_is_missing():
+    """★Alb が欠測なら補正Ca は「算出不能」であって Ca ではない。★
+
+    `np.where(np.nan < 4.0, ca + (4.0 - alb), ca)` は NaN の比較が False に落ちるため、
+    **補正されていない Ca が補正Ca として黙って混ざる**。
+    合成データでは 49 例がこれに当たっていた。管理目標の達成率も Cox の係数も、
+    その分だけ静かにずれる。missing.mcar_signals が
+    「Alb の欠測と補正Ca が関連している」として検出した。
+    """
+    df = pd.DataFrame({
+        "カルシウム(Ca)": [9.0, 8.0, 9.0],
+        "アルブミン(Alb)": [4.2, 3.0, np.nan],
+    })
+    out, notes = derive(df)
+    assert out["補正Ca"].iloc[0] == pytest.approx(9.0)      # Alb≥4 → 補正しない
+    assert out["補正Ca"].iloc[1] == pytest.approx(9.0)      # 8.0 + (4.0-3.0)
+    assert pd.isna(out["補正Ca"].iloc[2])                   # ★Ca の 9.0 を返さない★
+    assert any("算出不能" in n for n in notes)
+
+
+def test_corrected_calcium_times_p_inherits_the_missingness():
+    df = pd.DataFrame({
+        "カルシウム(Ca)": [9.0, 9.0],
+        "アルブミン(Alb)": [3.0, np.nan],
+        "無機リン(P)": [5.0, 5.0],
+    })
+    out, _ = derive(df)
+    assert out["補正Ca×P"].iloc[0] == pytest.approx(50.0)
+    assert pd.isna(out["補正Ca×P"].iloc[1])

@@ -198,6 +198,50 @@ sf.excluded    # 除外された症例（ID・理由・入力されていた元�
 イベント日と打ち切り日の**両方が入っている矛盾**、どちらも空欄、日付の逆転、
 未来日付、観察期間 0 を検出し、症例ごとに理由を付けて除外します。
 
+### 分割と前処理 — リークを構造的に不可能にする
+
+```python
+sp = mp.split(df, sch, test_size=0.2)     # 先に分ける
+p  = mp.prepare(sp, sch)                  # fit は train だけ
+model.fit(p.X_train, p.y_train)
+```
+
+`fit` を test に呼ぶと**止まります**。
+
+```python
+>>> mp.Preprocessor(sch).fit(sp.test)
+LeakageError: test に fit しようとしている。**これはリークである。**
+  前処理の統計量（補完の中央値、スケーラの平均、one-hot のカテゴリ集合、
+  winsorize の閾値）は train からしか学習してはならない。
+```
+
+通ったことは表として残せます。
+
+```
+              検査 結果                    内容
+   train/test の印 OK train=train、test=test
+           行の重なり OK                 重なりなし
+       fit に使った行 OK  train の行だけで fit している
+目的変数が特徴量に入っていないか OK       目的変数 = 1年以内イベント
+ 識別子が特徴量に入っていないか OK        識別子 = ['仮名ID']
+  同じ患者が両側に出ていないか OK                 重なりなし
+```
+
+**同じ患者が train と test の両方に入らないこと**が、分割でいちばん大事な性質です。
+ID に重複があれば `split()` は自動でその列を単位に分けます（行単位で分けると、
+モデルは患者を覚えるだけで高い精度を出し、新しい患者ではまったく動きません）。
+
+出力は**列名付きの DataFrame** です。これを失うと係数プロットも SHAP も
+`x0, x1, …` になり、教材として成立しません。
+
+```
+年齢              0.562
+Alb            -0.378
+Hb             -0.359
+糖尿病=1           0.251
+欠損あり_年齢        -0.226
+```
+
 ### 生存時間解析 — 黙って減る n を見張る
 
 ```python
@@ -329,9 +373,8 @@ uv run python examples/run_e2e.py          # schema → audit → 掃除 → 生
 
 ## 状態
 
-土台の 11 モジュールが動き、以下は実装中です。
+土台の 15 モジュールが動き、以下は実装中です。
 
-- `missing.py` / `outliers.py` / `pipeline.py` / `split.py`
 - `viz.py` / `report.py` — 単一ファイルの HTML レポート
 - `autoprep()` — 全自動 1 行の結線
 

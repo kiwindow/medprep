@@ -5,6 +5,44 @@
 
 ## [Unreleased]
 
+### 追加（Phase 9）— リークを構造的に不可能にする
+- `pipeline` — **前処理を 1 つの sklearn 変換器にまとめ、fit を train にしか呼べなくする。**
+  - `Preprocessor.fit(test)` は **`LeakageError` で止まる**（`split()` が付けた印を見る）。
+  - 分割を経ていないデータへの fit は警告する（最も多いリークの形）。
+  - fit した行と transform する行が部分的に重なれば警告する（train と test の混在）。
+  - `leak_check()` — 印・行の重なり・fit に使った行・目的変数・識別子・
+    同じ患者が両側に出ていないか、を表にする。**通ったことの証拠として残せる。**
+  - 出力は**列名付き DataFrame**（`set_output("pandas")` ＋
+    `verbose_feature_names_out=False`）。`欠損あり_年齢`、`施設=B院` のように読める名前にする。
+  - one-hot は既定で基準水準を落とし、`reference_levels()` でどれを基準にしたかを出す。
+  - **日付列は既定で特徴量に入れない**（暦の効果を学習させないため）。
+  - `distribution_shift()` — train の範囲外に出る値の割合。
+    **train 自身の丸め率と比べる**ので、もともと歪んだ列で誤報しない。
+- `splitting` — **分割。リークはここで始まる。**
+  - **同一 ID に重複があれば自動でグループ単位に分ける**（同じ患者が両側に入るのを防ぐ）。
+  - 分類は目的変数で、生存時間はイベントで層化する。
+  - `time_order=` で**時間順分割**（過去で学習し未来で検証する）。
+  - train と test の分布を SMD で比較し、|SMD| ≥ 0.2 の列を警告する。
+  - `cv_splitter()` / `fold_summary()`。グループが両側に出ていないことを表で確かめられる。
+- `missing` — **欠損の分析。補完はしない**（補完は train でしか fit できないので pipeline の仕事）。
+  - 列別・症例別・パターン別の欠損、`mcar_signals()` による**欠損の偏りの名指し**、
+    `drop_missing_outcome()`（目的変数は補完してはならない）、missingno による可視化。
+- `outliers` — **外れ値と入力ミスを区別する。**
+  - `NanSafeWinsorizer` — NaN を素通しする sklearn 変換器。
+    feature-engine の `Winsorizer` は NaN で停止するため自作した。
+    **閾値は fit でしか決めない。**
+  - IQR / MAD / 分位点。**MAD が 0 の列では閾値を作らない**（0 で割ると全例が外れ値になる）。
+  - 群ごとの閾値、Mahalanobis 距離、IsolationForest。
+  - `drop` は人が明示したときだけ。**医学では外れ値こそが重要な症例でありうる。**
+
+### 修正（Phase 9）
+- `clean.derive()` が **Alb 欠測時に「補正されていない Ca」を補正Ca として出していた。**
+  `np.nan < 4.0` が `False` に落ちるためで、合成データ 600 例では 49 例が該当した。
+  管理目標の達成率も Cox の係数も静かにずれる。算出不能として NaN にするよう直した。
+  **見つけたのは `missing.mcar_signals()`**（「Alb の欠測と補正Ca が関連している」）。
+- `outliers.detect` の「歪んだ分布」の注記を 1 割から 5% に下げた
+  （正規分布なら IQR 法で外れるのは 0.5% ほど）。
+
 ### 追加（Phase 8）
 - `survival` — **Kaplan-Meier・log-rank・Cox 回帰・比例ハザードの検定。**
   `survival_input` が「日付から (duration, event) を作る」ところを担い、
@@ -119,7 +157,6 @@
   cp311 と cp313 では必要な wheel も違うので、セルごとに分けるほうが正しい。
 
 ### 予定
-- `missing.py` / `outliers.py` / `pipeline.py` / `split.py`
 - `viz.py` / `report.py` — 単一ファイルの HTML レポート
 - `autoprep()` — 全自動 1 行の結線
 

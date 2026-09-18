@@ -17,8 +17,9 @@ def test_dictionary_ships_inside_the_wheel():
 
 
 @pytest.mark.parametrize("name", [
-    "clean", "dates", "describe", "hd", "quality", "schema", "survival",
-    "survival_input", "tac", "targets", "timing",
+    "clean", "dates", "describe", "hd", "missing", "outliers", "pipeline",
+    "quality", "schema", "splitting", "survival", "survival_input", "tac",
+    "targets", "timing",
 ])
 def test_submodules_import(name):
     importlib.import_module(f"medprep.{name}")

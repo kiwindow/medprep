@@ -53,6 +53,11 @@
     cox = s.cox(covariates="auto")      # 欠測で何例落ちたかを必ず報告する
     print(cox.report())
 
+    # 分割 → 前処理（★fit は train にしか呼べない★）
+    sp = mp.split(df, sch, test_size=0.2)
+    p  = mp.prepare(sp, sch)            # p.X_train / p.X_test は列名付き DataFrame
+    print(mp.leak_check(p.preprocessor, sp.train, sp.test))
+
     # 辞書駆動の掃除
     clean, rep = mp.clean_numeric(df)
     rep.show()
@@ -73,8 +78,12 @@ from . import (
     dates,
     describe,
     hd,
+    missing,
+    outliers,
+    pipeline,
     quality,
     schema,
+    splitting,
     survival,
     survival_input,
     tac,
@@ -111,8 +120,21 @@ from .hd import (
     tsat,
     urr,
 )
+from .missing import MissingReport, drop_missing_outcome, mcar_signals
+from .missing import analyze as analyze_missing
+from .outliers import NanSafeWinsorizer, OutlierReport
+from .outliers import detect as detect_outliers
+from .pipeline import (
+    LeakageError,
+    Prepared,
+    Preprocessor,
+    build_preprocessor,
+    leak_check,
+    prepare,
+)
 from .quality import AuditReport, Finding, audit, method_change_steps
 from .schema import ColumnSpec, Schema, infer_column
+from .splitting import SplitResult, cv_splitter, fold_summary, mark_as, split
 from .survival import (
     CoxResult,
     KMResult,
@@ -137,8 +159,8 @@ from .timing import POST, PRE, UNKNOWN, TimingSchema, check_requirements, detect
 __all__ = [
     "__version__",
     # モジュール
-    "clean", "dates", "describe", "hd", "quality", "schema", "survival",
-    "survival_input", "tac", "targets", "timing",
+    "clean", "dates", "describe", "hd", "missing", "outliers", "pipeline", "quality",
+    "schema", "splitting", "survival", "survival_input", "tac", "targets", "timing",
     # 列の役割とデータ品質監査
     "Schema", "ColumnSpec", "infer_column",
     "audit", "AuditReport", "Finding", "method_change_steps",
@@ -148,6 +170,13 @@ __all__ = [
     "build_survival", "SurvivalFrame",
     # 生存時間解析
     "Survival", "KMResult", "LogRankResult", "CoxResult", "logrank_trend",
+    # 欠損・外れ値
+    "analyze_missing", "drop_missing_outcome", "mcar_signals", "MissingReport",
+    "detect_outliers", "OutlierReport", "NanSafeWinsorizer",
+    # 分割と前処理（リーク防止）
+    "split", "cv_splitter", "fold_summary", "mark_as", "SplitResult",
+    "Preprocessor", "prepare", "Prepared", "build_preprocessor", "leak_check",
+    "LeakageError",
     # 掃除
     "clean_numeric", "derive", "load_dict", "build_alias_map", "CleanReport",
     # 採血時点

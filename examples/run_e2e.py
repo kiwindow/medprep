@@ -18,8 +18,13 @@ import pandas as pd
 import medprep as mp
 from medprep.clean import clean_numeric, derive
 from medprep.describe import compare_groups, table_one, target_achievement, target_summary
+from medprep.missing import analyze as analyze_missing
+from medprep.missing import drop_missing_outcome
+from medprep.outliers import detect as detect_outliers
+from medprep.pipeline import LeakageError, Preprocessor, leak_check, prepare
 from medprep.quality import audit
 from medprep.schema import Schema
+from medprep.splitting import split
 from medprep.survival import Survival
 from medprep.survival_input import build_survival
 
@@ -155,4 +160,60 @@ chk = pd.DataFrame({
 chk["CIに真値を含む"] = (chk["95%CI下限"] <= chk["真の係数"]) & (chk["真の係数"] <= chk["95%CI上限"])
 print(chk.round(3).to_string())
 print(f"\n  {int(chk['CIに真値を含む'].sum())}/{len(chk)} の変数で 95%CI が真値を含む")
+
+# ---------------------------------------------------------------- 12) 欠損と外れ値
+STEP("12) 欠損と外れ値（補完はここではしない）")
+ms = analyze_missing(clean, sch, group="施設")
+print(ms.report())
+print()
+ol = detect_outliers(clean, sch, id_col="仮名ID")
+print(ol.report())
+
+# ---------------------------------------------------------------- 13) 分割と前処理
+STEP("13) 分割と前処理 — リークを構造的に不可能にする")
+
+# 目的変数: 1 年以内のイベント発生。
+#   1 年経たずに打ち切られた症例は「1 年以内に起きたか」を判定できないので除く。
+#   ★除いた数を必ず報告する。★
+d1 = d.copy()
+d1["1年以内イベント"] = np.where(d1["event"] == 1, (d1["duration"] <= 1.0).astype(float), 0.0)
+d1.loc[(d1["event"] == 0) & (d1["duration"] < 1.0), "1年以内イベント"] = np.nan
+d1, info = drop_missing_outcome(d1, "1年以内イベント")
+d1["1年以内イベント"] = d1["1年以内イベント"].astype(int)
+print(f"目的変数『1年以内イベント』: {info['残り']} 例（判定できない {info['除外']} 例を除外。"
+      f"{info['理由'].splitlines()[0]}）")
+print(f"  陽性率 {d1['1年以内イベント'].mean():.1%}")
+
+sch1 = Schema.infer(d1, id_col="仮名ID", group="施設",
+                    outcome="1年以内イベント", task="classification")
+sp = split(d1, sch1, test_size=0.25, seed=0)
+print("\n" + sp.report())
+
+prep_out = prepare(sp, sch1, columns=[c for c in sch1.features()
+                                      if c not in ("duration", "event", "低Alb")])
+print("\n" + prep_out.report())
+
+print("\nリークの検査:")
+print(leak_check(prep_out.preprocessor, sp.train, sp.test).to_string(index=False))
+
+print("\ntest に fit しようとすると止まる:")
+try:
+    Preprocessor(sch1).fit(sp.test)
+except LeakageError as e:
+    print("  ✗ " + str(e).split("。")[0] + "。")
+
+# 実際に 1 つモデルを通してみる（前処理が学習にそのまま渡せることの確認）
+STEP("14) 前処理済みの行列をそのままモデルに渡す")
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
+
+m = LogisticRegression(max_iter=2000).fit(prep_out.X_train, prep_out.y_train)
+auc_tr = roc_auc_score(prep_out.y_train, m.predict_proba(prep_out.X_train)[:, 1])
+auc_te = roc_auc_score(prep_out.y_test, m.predict_proba(prep_out.X_test)[:, 1])
+print(f"ロジスティック回帰  train AUC = {auc_tr:.3f} / test AUC = {auc_te:.3f}")
+coef = (pd.Series(m.coef_[0], index=prep_out.X_train.columns)
+        .sort_values(key=abs, ascending=False).head(8))
+print("\n係数の大きい順（★列名が残っているので読める★）:")
+print(coef.round(3).to_string())
+
 print("\n✅ 通し検証 完了")
