@@ -201,3 +201,16 @@ def test_the_copied_functions_keep_their_signature():
         "project_directory", "folder_names", "runnumber"]
     assert list(inspect.signature(paths.create_directory).parameters) == [
         "path_run", "folder_name"]
+
+
+def test_colab_paths_use_forward_slashes_on_every_os(monkeypatch):
+    """★`os.path.join` で Colab のパスを組んではならない。★
+
+    Windows の Python から呼ぶと `…/AI\\lab_output` になる。
+    Colab の保存先は常に POSIX である。
+    """
+    monkeypatch.setattr(paths, "IN_COLAB", True)
+    monkeypatch.setattr(paths, "OUTPUT_DIR", "")
+    monkeypatch.setattr(paths, "WORK_DIR", "")
+    for f in (paths.resolve_output_dir, paths.resolve_work_dir, paths.resolve_log_dir):
+        assert "\\" not in f(), f

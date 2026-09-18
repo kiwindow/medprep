@@ -65,6 +65,18 @@ _GITIGNORE = "# 計算結果（個票データを含みうる。バージョン�
 _LAST: dict[str, int] = {}
 
 
+def _colab(*parts: str) -> str:
+    """Colab（Linux）のパスを組む。
+
+    ★`os.path.join` を使ってはならない。★
+    Windows の Python から呼ぶと `/content/drive/MyDrive/AI\\lab_output` になる。
+    Colab の保存先は常に POSIX なので、区切りは `/` に固定する。
+    （Windows 機が Colab で動くことは無いが、`IN_COLAB` を立てた検査が
+    Windows の CI で落ちて気づいた。パスの組み立てが OS に依存していた。）
+    """
+    return "/".join(p.rstrip("/") for p in parts)
+
+
 def in_colab() -> bool:
     """Colab で動いているか。"""
     if IN_COLAB is not None:
@@ -95,7 +107,7 @@ def resolve_work_dir(explicit: str | None = None) -> str:
     if explicit:
         return os.path.expanduser(str(explicit))
     if in_colab():
-        return os.path.join(COLAB_BASE, "lab_work")
+        return _colab(COLAB_BASE, "lab_work")
     p = resolve_project_dir()
     return os.path.join(os.path.dirname(p), os.path.basename(p) + "_work")
 
@@ -106,14 +118,15 @@ def resolve_output_dir(explicit: str | None = None) -> str:
     if explicit:
         return os.path.expanduser(str(explicit))
     if in_colab():
-        return os.path.join(COLAB_BASE, "lab_output")
+        return _colab(COLAB_BASE, "lab_output")
     p = resolve_project_dir()
     return os.path.join(os.path.dirname(p), os.path.basename(p) + "_output")
 
 
 def resolve_log_dir(explicit: str | None = None) -> str:
     """実行の記録を残す場所（`~/lab_work/log`）。"""
-    return os.path.join(resolve_work_dir(explicit), "log")
+    work = resolve_work_dir(explicit)
+    return _colab(work, "log") if in_colab() else os.path.join(work, "log")
 
 
 # ================================================================== 採番
