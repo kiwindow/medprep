@@ -479,3 +479,44 @@ def test_removed_says_the_rows_were_only_marked():
     row = rep.removed[rep.removed["種類"] == "行"]
     assert (row["処置"].str.contains("削除しない")).all()
     assert "削除していない" in rep.report()
+
+
+def test_dates_are_written_without_the_time_part(isolated):
+    """★Excel に 00:00:00 を出さない。★ 検査日は年月日で読むものである。"""
+    import openpyxl
+    rep = run(messy_dates(), date_col="検査日", save=True)
+    path = os.path.join(rep.run.run, "data", "掃除済みデータ.xlsx")
+    ws = openpyxl.load_workbook(path)["データ"]
+    header = [c.value for c in ws[1]]
+    col = header.index("検査日") + 1
+    cell = ws.cell(row=2, column=col)
+    # ★Excel の表示を決めるのは書式である。★ 時刻を含む書式にしない。
+    assert cell.number_format == "YYYY-MM-DD"
+    assert "HH" not in cell.number_format and "SS" not in cell.number_format
+    # 計算に使うほうは datetime のまま（日付の引き算に要る）
+    assert pd.api.types.is_datetime64_any_dtype(rep.df_clean["検査日"])
+
+
+def test_the_outputs_table_explains_each_file(isolated):
+    """★3 つがどう違うのか、何をしたのかが表で分かること。★"""
+    rep = run(outcome="転帰", task="classification", save=True)
+    o = rep.outputs
+    assert set(o.columns) == {"ファイル", "行", "列", "施した処置", "使いどころ"}
+    names = " ".join(o["ファイル"])
+    assert "掃除済み" in names and "解析用" in names and "前処理済み" in names
+    # 段が進むほど処置が増える
+    lens = o["施した処置"].str.len().tolist()
+    assert lens[0] < lens[1] < lens[2]
+    assert os.path.exists(rep.run.file("table", "書き出したデータの説明.xlsx"))
+
+
+def test_the_report_explains_the_three_files(isolated):
+    rep = run(outcome="転帰", task="classification", save=True)
+    html = rep.html.to_html()
+    assert "書き出したデータ" in html
+    assert "axis=1" in html
+
+
+def test_outputs_is_empty_without_saving():
+    rep = run(outcome="転帰", task="classification")
+    assert rep.outputs is not None and len(rep.outputs) == 0

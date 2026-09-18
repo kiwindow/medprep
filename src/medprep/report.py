@@ -140,6 +140,8 @@ def build_report(
     subtitle: str = "",
     audit=None,
     removed=None,
+    outputs=None,
+    run=None,
     missing=None,
     outliers=None,
     table1=None,
@@ -203,6 +205,27 @@ def build_report(
                "元のデータと症例ごとに axis=1 で結合し直せなくなる。"
                "外すかどうかは <code>除外推奨</code> 列を見て人が決めること。", kind="html")
         s.table(removed, caption="減らしたものの一覧", max_rows=300)
+
+    # --- 書き出したデータ（★3 つの違いを最初に言う★）
+    if outputs is not None and len(outputs):
+        s = rep.section("1c. 書き出したデータ ―― 3 つはどう違うのか")
+        s.text("同じデータを <b>3 段階</b>で書き出してある。"
+               "<b>施した処置が 1 段ずつ違う。</b>どれを使うかで結果が変わるので、"
+               "下の表で確かめること。", kind="html")
+        s.text("<b>掃除済み</b>は <u>人が読むため</u>のもの。元の記録と症例ごとに"
+               "突き合わせられるよう、ID も落とす予定の列も残してある。<br>"
+               "<b>解析用</b>は <u>自分で解析するため</u>のもの。解析に使わない列"
+               "（ID・重複列・自由記載）を除いてある。"
+               "<b>行は 1 つも減っていない</b>ので、元データと "
+               "<code>axis=1</code> で結合できる。<br>"
+               "<b>前処理済み</b>は <u>モデルに渡すため</u>のもの。"
+               "目的変数が欠測の症例を含まないので<b>行数が違う</b>。"
+               "元の行番号と ID を付けてあるので、あとから突き合わせられる。",
+               kind="html")
+        s.table(outputs, caption="書き出したデータと、そこまでに施した処置",
+                max_rows=20)
+        if run is not None:
+            s.text(f"保存先: {run.run}", kind="note")
 
     # --- schema
     if schema is not None:

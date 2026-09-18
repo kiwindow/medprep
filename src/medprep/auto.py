@@ -79,6 +79,7 @@ class PrepResult:
     run: _paths.RunPaths | None = None
     log: _paths.RunLog | None = None
     removed: pd.DataFrame | None = None     # 何を、いくつ、なぜ減らしたか
+    outputs: pd.DataFrame | None = None     # 書き出すファイルと、そこまでに施した処置
     dropped_outcome: dict = field(default_factory=dict)
     warnings: list = field(default_factory=list)
     notes: list = field(default_factory=list)
@@ -410,15 +411,21 @@ def autoprep(
              + (f"（描けなかったもの: {[t for t, _ in res.figures.skipped]}）"
                 if res.figures.skipped else ""))
 
-    # -------------------------------------------------------- 13) レポート
+    # -------------------------------------------------------- 13) 保存先を先に決める
+    #   ★レポートに「どのファイルに何を書いたか」を載せるため、
+    #     run フォルダを作ってからレポートを組む。★
+    if save:
+        _open_run(res, method=method, project_folder=project_folder,
+                  out_dir=out_dir, source=source)
+    res.outputs = _outputs_table(res, save=save, save_data=save_data)
+
+    # -------------------------------------------------------- 14) レポート
     res.html = _build_html(res, title=title, show_values=show_values, source=source)
     step("HTML 1 枚にまとめる", True, f"{len(res.html.sections)} 節")
 
-    # -------------------------------------------------------- 14) 保存
+    # -------------------------------------------------------- 15) 保存
     if save:
-        _save_all(res, method=method, project_folder=project_folder,
-                  out_dir=out_dir, source=source, step=step, t0=t0,
-                  save_data=save_data)
+        _write_all(res, step=step, t0=t0, save_data=save_data)
     res.seconds = time.time() - t0
 
     if verbose:
@@ -449,7 +456,8 @@ def _build_html(res: PrepResult, *, title=None, show_values=False, source="", **
         res.schema,
         title=title or "前処理レポート",
         subtitle=sub,
-        audit=res.audit, removed=res.removed, missing=res.missing,
+        audit=res.audit, removed=res.removed, outputs=res.outputs, run=res.run,
+        missing=res.missing,
         outliers=res.outliers,
         table1=res.table1,
         comparison=getattr(res.table1, "comparison", None),
@@ -459,13 +467,11 @@ def _build_html(res: PrepResult, *, title=None, show_values=False, source="", **
         figures=res.figures, show_values=show_values, **kwargs)
 
 
-def _save_all(res: PrepResult, *, method, project_folder, out_dir, source, step, t0,
-              save_data=True):
-    """`run{N}/` 以下に全部書き出す（構想 §7 の保存規約）。"""
+def _open_run(res: PrepResult, *, method, project_folder, out_dir, source) -> None:
+    """保存先（`run{N}`）を決めて、実行の記録を開始する。**まだ何も書かない。**"""
     p = _paths.new_run(method, project_folder=project_folder, output_dir=out_dir)
     res.run = p
     df = res.df_clean if res.df_clean is not None else res.df_raw
-
     res.log = _paths.RunLog.start(
         p,
         入力ファイル名=os.path.basename(str(source)),
@@ -474,6 +480,12 @@ def _save_all(res: PrepResult, *, method, project_folder, out_dir, source, step,
         行数=len(df) if df is not None else "",
         目的変数=(res.schema.target or {}).get("name", "") if res.schema else "",
     )
+
+
+def _write_all(res: PrepResult, *, step, t0, save_data=True) -> None:
+    """`run{N}/` 以下に全部書き出す（構想 §7 の保存規約）。"""
+    p = res.run
+    df = res.df_clean if res.df_clean is not None else res.df_raw
 
     def put(path, fn):
         try:
@@ -497,7 +509,10 @@ def _save_all(res: PrepResult, *, method, project_folder, out_dir, source, step,
         put(p.file("table", "table1.xlsx"), res.table1.to_excel)
     if res.removed is not None:
         put(p.file("table", "除外の記録.xlsx"),
-            lambda q: res.removed.to_excel(q, index=False))
+            lambda q: _excel(res.removed, q))
+    if res.outputs is not None:
+        put(p.file("table", "書き出したデータの説明.xlsx"),
+            lambda q: _excel(res.outputs, q))
 
     # --- data/ ： ★症例レベルのデータ★
     if save_data:
@@ -518,17 +533,36 @@ def _save_all(res: PrepResult, *, method, project_folder, out_dir, source, step,
         put(p.file("report", "prep_report.html"), res.html.to_html)
 
     # ★キー名は既存ノートブックの LOG_CSV_COLUMNS と同じにする。★
-    #   違う名前で書くと history.csv の列が 1 本増えるだけで、同じ列に並ばない。
-    res.log.finish(**{
-        "所要時間(秒)": round(time.time() - t0, 1),
-        "欠損セル数": int(df.isna().sum().sum()) if df is not None else "",
-        "説明変数の数": (res.prepared.X_train.shape[1] if res.prepared else
-                    (len(res.schema.features()) if res.schema else "")),
-        "入力ファイル(フルパス)": str(source),
-        "確認事項": len(res.warnings),
-    })
-    res.saved.append(res.log.path)
+    if res.log is not None:
+        res.log.finish(**{
+            "所要時間(秒)": round(time.time() - t0, 1),
+            "欠損セル数": int(df.isna().sum().sum()) if df is not None else "",
+            "説明変数の数": (res.prepared.X_train.shape[1] if res.prepared else
+                        (len(res.schema.features()) if res.schema else "")),
+            "確認事項": len(res.warnings),
+        })
+        res.saved.append(res.log.path)
     step("run フォルダに保存する", True, f"run{p.runnumber}  {p.run}")
+
+
+def _date_only(df: pd.DataFrame) -> pd.DataFrame:
+    """日付の列から時刻を落とす。★Excel に 00:00:00 を出さないため。★
+
+    `datetime64` のまま書くと Excel の既定書式が `YYYY-MM-DD HH:MM:SS` になり、
+    検査日が「2021-06-29 00:00:00」と表示される。値を `date` にして書く。
+    （計算に使う `df_clean` のほうは `datetime64` のままにする。日付の引き算に要る。）
+    """
+    out = df.copy()
+    for c in out.columns:
+        if pd.api.types.is_datetime64_any_dtype(out[c]):
+            out[c] = out[c].dt.date
+    return out
+
+
+def _excel(df, path, sheet_name="Sheet1") -> None:
+    """Excel に書く。★日付は年月日だけにする（00:00:00 を出さない）。★"""
+    with pd.ExcelWriter(path, engine="openpyxl") as w:
+        _date_only(df).to_excel(w, sheet_name=sheet_name, index=False)
 
 
 def _save_data(res: PrepResult, p, put) -> None:
@@ -552,7 +586,7 @@ def _save_data(res: PrepResult, p, put) -> None:
     if res.df_clean is not None:
         def _clean_book(q):
             with pd.ExcelWriter(q, engine="openpyxl") as w:
-                res.df_clean.to_excel(w, sheet_name="データ", index=False)
+                _date_only(res.df_clean).to_excel(w, sheet_name="データ", index=False)
                 if res.schema is not None:
                     res.schema.to_frame().to_excel(w, sheet_name="列の扱い", index=False)
                 if res.removed is not None and len(res.removed):
@@ -566,7 +600,7 @@ def _save_data(res: PrepResult, p, put) -> None:
             keep += [c for c in (EXCLUDE_FLAG, EXCLUDE_REASON)
                      if c in res.df_clean.columns and c not in keep]
             put(os.path.join(d, "解析用データ.xlsx"),
-                lambda q: res.df_clean[keep].to_excel(q, index=False))
+                lambda q: _excel(res.df_clean[keep], q))
 
     if res.prepared is None:
         return
@@ -587,9 +621,9 @@ def _save_data(res: PrepResult, p, put) -> None:
         return out
 
     put(os.path.join(d, "前処理済み_train.xlsx"),
-        lambda q: _with_meta(res.X_train, res.y_train).to_excel(q, index=False))
+        lambda q: _excel(_with_meta(res.X_train, res.y_train), q))
     put(os.path.join(d, "前処理済み_test.xlsx"),
-        lambda q: _with_meta(res.X_test, res.y_test).to_excel(q, index=False))
+        lambda q: _excel(_with_meta(res.X_test, res.y_test), q))
 
 
 def _parse_dates(dfc, schema_raw, date_col, survival_dates, step, warn) -> dict:
@@ -638,6 +672,57 @@ def _parse_dates(dfc, schema_raw, date_col, survival_dates, step, warn) -> dict:
         orders = {out[c].order for c in touched}
         step("日付を解釈する", True,
              f"{done} 列を datetime に揃えた（並び: {'、'.join(sorted(orders))}）")
+    return out
+
+
+def _outputs_table(res: PrepResult, *, save: bool, save_data: bool) -> pd.DataFrame:
+    """**どのファイルに何が入っていて、そこまでに何をしたか。**
+
+    「掃除済み」「解析用」「前処理済み」は、**施した処置が 1 段ずつ違う。**
+    どれを使えばよいか分からないまま渡されるのがいちばん困るので、表にして出す。
+    """
+    clean_steps = ("① 欠損コード（999 等）と『未測定』を NaN に　"
+                   "② 検出限界（<0.1）を数値化　③ 単位の混在を換算　"
+                   "④ 生理学的にあり得ない値を NaN に　⑤ 派生指標を追加（補正Ca 等）　"
+                   "⑥ 日付を解釈（和暦・全角・シリアル値）　⑦ 外すのが望ましい行に印")
+    use_steps = clean_steps + "　⑧ **解析に使わない列を削除**（ID・重複列・自由記載）"
+    prep_steps = (use_steps + "　⑨ **目的変数が欠測の症例を除く**　⑩ train/test に分割　"
+                  "⑪ 欠損を補完・⑫ スケーリング・⑬ カテゴリをダミー化"
+                  "（★⑪〜⑬ は train だけで fit★）")
+
+    n_raw = len(res.df_raw) if res.df_raw is not None else 0
+    rows = []
+
+    def add(name, rows_txt, cols_txt, steps, use):
+        rows.append({"ファイル": name, "行": rows_txt, "列": cols_txt,
+                     "施した処置": steps, "使いどころ": use})
+
+    if res.df_clean is not None:
+        add("data/掃除済みデータ.xlsx",
+            f"{len(res.df_clean)}（元と同じ）", f"{res.df_clean.shape[1]}（全列）",
+            clean_steps,
+            "人が読む。元の記録と症例ごとに突き合わせる（ID が残っている）")
+        if res.schema is not None:
+            keep = [c for c in res.schema.kept() if c in res.df_clean.columns]
+            keep += [c for c in (EXCLUDE_FLAG, EXCLUDE_REASON)
+                     if c in res.df_clean.columns and c not in keep]
+            add("data/解析用データ.xlsx",
+                f"{len(res.df_clean)}（元と同じ）",
+                f"{len(keep)}（落とす列を除く）", use_steps,
+                "自分で解析する。行が減っていないので元データと axis=1 で結合できる")
+
+    if res.prepared is not None:
+        add("data/前処理済み_train.xlsx",
+            f"{len(res.X_train)}（★部分集合★）", f"{res.X_train.shape[1]}（特徴量のみ）",
+            prep_steps, "モデルの学習に渡す。元の行番号と ID が付いている")
+        add("data/前処理済み_test.xlsx",
+            f"{len(res.X_test)}（★部分集合★）", f"{res.X_test.shape[1]}（特徴量のみ）",
+            prep_steps + "（test は transform のみ）", "モデルの評価に使う")
+
+    out = pd.DataFrame(rows, columns=["ファイル", "行", "列", "施した処置", "使いどころ"])
+    if not save or not save_data:
+        out = out.iloc[0:0]
+    out.attrs["n_raw"] = n_raw
     return out
 
 

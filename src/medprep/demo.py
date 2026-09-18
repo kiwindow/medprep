@@ -17,6 +17,13 @@
   9. ID 的な高カーディナリティ文字列列（備考）
  10. 完全相関する重複列（施設 と 施設コード）
  11. **2020 年 4 月の ALP 測定法変更（JSCC → IFCC）による段差**
+ 12. **透析前後を取り違えた症例**（透析後 BUN のほうが高い）
+
+透析前後の両方を持つ項目
+------------------------
+BUN・クレアチニン・カリウム・体重は**透析前と透析後の 2 列**を持つ。
+これがあると URR・spKt/V・nPCR・%CGR が計算でき、
+`quality.audit()` の「前後の方向」検査（BUN は透析で下がるはず）も働く。
 
 真の生存モデルの係数も返せるので、推定が正しいことを受講者が自分で確かめられる。
 
@@ -88,6 +95,25 @@ def dialysis_cohort(n: int = 600, seed: int = 20260918) -> pd.DataFrame:
     b2mg = np.clip(rng.normal(28, 6, n), 10, 60).round(1)
     vintage = np.clip(rng.exponential(60, n), 1, 400).round(0)     # 透析歴（月）
 
+    # ---- 透析前後の検査値と体格 ------------------------------------------
+    #   BUN・Cr・K は透析で下がり、体重は除水で下がる。
+    #   これがあると URR・spKt/V・nPCR・%CGR が計算できる。
+    height = np.where(sex == "男",
+                      rng.normal(165, 7, n), rng.normal(152, 6, n)).round(1)
+    dw = np.clip(rng.normal(21.5, 3.5, n) * (height / 100) ** 2, 30, 110).round(1)
+    idwg = np.clip(rng.normal(2.6, 0.9, n), 0.2, 6.0).round(1)      # 透析間体重増加
+    w_pre = (dw + idwg).round(1)
+    w_post = dw
+
+    td = rng.choice([3.5, 4.0, 4.5, 5.0], n, p=[.15, .60, .20, .05])
+    urr = np.clip(rng.normal(0.68, 0.07, n), 0.45, 0.85)            # 尿素除去率
+    bun_pre = np.clip(rng.normal(62, 15, n), 25, 120).round(0)
+    bun_post = (bun_pre * (1 - urr)).round(0)
+    cr_pre = np.clip(rng.normal(11.0, 2.6, n), 3, 20).round(1)
+    cr_post = (cr_pre * (1 - np.clip(rng.normal(0.60, 0.07, n), 0.3, 0.8))).round(1)
+    k_pre = np.clip(rng.normal(5.2, 0.8, n), 3.0, 8.0).round(1)
+    k_post = (k_pre * (1 - np.clip(rng.normal(0.35, 0.07, n), 0.1, 0.6))).round(1)
+
     # 真の生存モデル: 高齢・低Alb・高CRP・低Hb・糖尿病で予後不良
     lp = (0.045 * (age - 68) - 0.85 * (alb - 3.6) + 0.30 * np.log(crp + 0.1)
           - 0.18 * (hb - 10.8) + 0.35 * dm + 0.002 * (vintage - 60))
@@ -118,6 +144,16 @@ def dialysis_cohort(n: int = 600, seed: int = 20260918) -> pd.DataFrame:
         "年齢": age,
         "透析歴_月": vintage,
         "糖尿病": dm,
+        "身長": height,
+        "透析時間": td,
+        "透析前体重": w_pre,
+        "透析後体重": w_post,
+        "透析前BUN": bun_pre,
+        "透析後BUN": bun_post,
+        "透析前クレアチニン(Cr)": cr_pre,
+        "透析後クレアチニン(Cr)": cr_post,
+        "透析前カリウム(K)": k_pre,
+        "透析後カリウム(K)": k_post,
         "アルブミン(Alb)": alb,
         "末梢血｜血色素量(Hb)": hb,
         "C反応性蛋白(CRP)定量": crp,
@@ -174,6 +210,19 @@ def _inject_dirt(df: pd.DataFrame, end, rng, n: int) -> None:
     df.loc[cut(138, 141), "年齢"] = 250                                          # あり得ない値
     df.loc[cut(141, 190), "アルブミン(Alb)"] = np.nan                             # 通常の欠損
     df.loc[cut(190, 205), "透析歴_月"] = np.nan
+
+    # ★透析前後の取り違え（C院の検体だけ列の順序が逆）★
+    #   施設ごとにエクスポートの仕様が違い、1 施設だけ前後が入れ替わっていた——
+    #   実務でいちばんよくある形である。**検定でも例外でも捕まらない。**
+    #   透析後 BUN のほうが高いのは生理学的にあり得ず、URR が負になる。
+    #   audit の「前後の方向」検査が拾い、施設別に見ると 1 施設に偏っていると分かる。
+    swap = df.index[df["施設"] == "C院"]
+    for a, b in (("透析前BUN", "透析後BUN"),
+                 ("透析前クレアチニン(Cr)", "透析後クレアチニン(Cr)"),
+                 ("透析前カリウム(K)", "透析後カリウム(K)"),
+                 ("透析前体重", "透析後体重")):
+        va, vb = df.loc[swap, a].copy(), df.loc[swap, b].copy()
+        df.loc[swap, a], df.loc[swap, b] = vb, va
 
 
 def save(path="synthetic_dialysis_cohort.xlsx", **kwargs) -> str:

@@ -13,13 +13,57 @@ from medprep import demo
 def test_the_default_cohort_is_reproducible():
     a, b = demo.dialysis_cohort(), demo.dialysis_cohort()
     pd.testing.assert_frame_equal(a, b)
-    assert a.shape == (600, 20)
+    assert a.shape == (600, 30)
 
 
 def test_a_different_seed_gives_a_different_cohort():
     a = demo.dialysis_cohort(seed=1)
     b = demo.dialysis_cohort(seed=2)
     assert not a["年齢"].equals(b["年齢"])
+
+
+# ---------------------------------------------------------------- 透析前後
+def test_pre_and_post_dialysis_values_exist():
+    """★前後の組があると URR・spKt/V・nPCR・%CGR が計算できる。★"""
+    df = demo.dialysis_cohort()
+    for base in ("BUN", "クレアチニン(Cr)", "カリウム(K)", "体重"):
+        assert f"透析前{base}" in df.columns and f"透析後{base}" in df.columns
+
+
+def test_the_dialysis_indices_can_be_calculated():
+    import medprep as mp
+    from medprep.timing import REQUIREMENTS, TimingSchema, check_requirements
+    df = demo.dialysis_cohort()
+    amap = mp.build_alias_map(mp.load_dict())
+    ts = TimingSchema.infer(df, alias_map=amap)
+    ok = check_requirements(ts, {"Td": "透析時間", "age": "年齢", "sex": "性別"})
+    can = set(ok.loc[ok["判定"] == "算出可", "指標"])
+    assert {"URR", "spKt/V", "nPCR", "%CGR", "GNRI", "BMI"} <= can
+    assert set(REQUIREMENTS) >= can
+
+
+def test_one_facility_has_its_pre_and_post_swapped():
+    """★実務でいちばんよくある形：1 施設だけエクスポートの列順が逆。★
+
+    透析後 BUN のほうが高いのは生理学的にあり得ない。検定でも例外でも捕まらず、
+    URR が負になって初めて分かる。audit の「前後の方向」検査が拾う。
+    """
+    df = demo.dialysis_cohort()
+    rev = pd.to_numeric(df["透析後BUN"]) > pd.to_numeric(df["透析前BUN"])
+    assert rev.sum() > 0
+    by = df.assign(rev=rev).groupby("施設")["rev"].mean()
+    assert (by > 0.9).sum() == 1          # 1 施設に固まっている
+    assert (by < 0.01).sum() == len(by) - 1
+
+
+def test_the_audit_catches_the_swapped_facility():
+    import matplotlib
+    matplotlib.use("Agg")
+    import medprep as mp
+    df = demo.dialysis_cohort()
+    aud = mp.audit(df, id_col="仮名ID", group="施設")
+    msgs = [f.message for f in aud.findings if f.category == "採血時点"]
+    assert any("向きが逆" in m for m in msgs)
 
 
 def test_it_scales_to_other_sizes():
