@@ -426,3 +426,23 @@ def test_encode_binary_columns_skips_columns_that_are_already_0_1():
     out, table = encode_binary_columns(df, sch)
     assert "糖尿病" not in set(table["元の列"])
     assert out["糖尿病"].equals(df["糖尿病"])
+
+
+def test_a_column_that_collapses_to_one_value_is_reported():
+    """★前処理で列が潰れても例外は出ない。だから見張る。★
+
+    スケーリング後は全例きっかり 0 になり、見た目は正常なまま、
+    その変数だけがモデルに何も伝えなくなる。
+    """
+    from medprep.schema import NUMERIC
+
+    df = frame()
+    df["定数列"] = 4.0
+    sch = schema_of(df)
+    # schema は定数列を自動で外す。ここでは**人が schema.yaml を直して残した**
+    # 状況を作る（実際、外れ値処理で潰れて定数になる経路もあった）。
+    sch.columns["定数列"].role = NUMERIC
+    sch.columns["定数列"].action = "keep"
+    prep = Preprocessor(sch)
+    prep.fit(mark_as(df, "train"))
+    assert any("値が 1 つしかない列" in w for w in prep.record.warnings)

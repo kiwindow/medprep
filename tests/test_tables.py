@@ -110,11 +110,13 @@ def test_japanese_and_english_hold_the_same_numbers():
 def test_internal_flag_columns_are_not_shown():
     """掃除の過程で付けた内部フラグは、人が読む表に出さない。"""
     df = frame()
+    df["検出限界未満_Alb"] = 0
     df["Alb__censored_low"] = 0
     df["欠損あり_年齢"] = 0
     gs = built(df)
     labels = " ".join(gs.table1.frame_ja.iloc[:, 0])
     assert "censored" not in labels and "欠損あり" not in labels
+    assert "検出限界" not in labels
 
 
 def test_excel_has_japanese_sheet1_and_english_sheet2(tmp_path):

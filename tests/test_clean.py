@@ -10,7 +10,7 @@ def test_detection_limit_becomes_half_lod_with_a_flag():
     df = pd.DataFrame({"C反応性蛋白(CRP)定量": ["<0.1", 0.5, "＜0.1"]})
     out, rep = clean_numeric(df)
     assert out["C反応性蛋白(CRP)定量"].iloc[0] == 0.05
-    assert out["C反応性蛋白(CRP)定量__censored_low"].tolist() == [1, 0, 1]
+    assert out["検出限界未満_C反応性蛋白(CRP)定量"].tolist() == [1, 0, 1]
 
 
 def test_normal_values_are_never_rescaled_as_unit_confusion():

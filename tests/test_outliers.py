@@ -242,3 +242,23 @@ def test_multivariate_helpers_return_empty_when_they_cannot_run():
 def test_report_is_printable():
     r = detect(frame(), columns=["a", "b"])
     assert "外れ値の検出" in r.report()
+
+
+def test_iqr_of_zero_does_not_collapse_the_column():
+    """★IQR が 0 の列を winsorize すると、列が 1 つの値に潰れる。★
+
+    値が数種類しかない列（透析時間は 4.0 時間が 6 割）では Q1 = Q3 になる。
+    そのまま閾値にすると上下限が同じ値になり、分散 0 の列ができる。
+    スケーリング後は全例きっかり 0 になり、**例外は出ないまま、その変数だけが
+    モデルから消える。** 実際に合成データの透析時間がこれで消えていた。
+    """
+    from medprep.outliers import NanSafeWinsorizer, iqr_limits
+
+    x = pd.Series([4.0] * 500 + [3.5] * 50 + [4.5] * 40 + [5.0] * 10)
+    assert x.quantile(0.25) == x.quantile(0.75)          # IQR = 0 の状況
+    lo, hi = iqr_limits(x)
+    assert lo == float("-inf") and hi == float("inf")    # 閾値を作らない
+
+    out = NanSafeWinsorizer().fit_transform(pd.DataFrame({"透析時間": x}))
+    assert out["透析時間"].nunique() == 4                 # 潰れていない
+    assert float(out["透析時間"].std()) > 0

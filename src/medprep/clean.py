@@ -193,11 +193,15 @@ def clean_numeric(
                                 f"< は 1/2 LOD を代入（policy={lod_policy}）"))
             if add_flags:
                 if lo.any():
-                    out[f"{col}__censored_low"] = lo.astype(int)
-                    rep.flags[f"{col}__censored_low"] = col
+                    # ★印の列は、値の列と見間違えない名前にする。★
+                    #   `CRP__censored_low` は Excel で列名が切れると
+                    #   「CRP」に見え、**ほぼ全部 0 なので「CRP が全部 0」
+                    #   と読まれる**。先頭に日本語で用途を書いておく。
+                    out[f"検出限界未満_{col}"] = lo.astype(int)
+                    rep.flags[f"検出限界未満_{col}"] = col
                 if hi.any():
-                    out[f"{col}__censored_high"] = hi.astype(int)
-                    rep.flags[f"{col}__censored_high"] = col
+                    out[f"検出限界超_{col}"] = hi.astype(int)
+                    rep.flags[f"検出限界超_{col}"] = col
 
         # --- 欠損コード（分布から浮いている値のみ）
         if apply_missing_codes:

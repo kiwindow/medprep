@@ -244,3 +244,35 @@ def test_no_figure_contains_a_glyph_the_font_cannot_draw():
                 viz.distributions(frame(), columns=["年齢"]),
                 viz.correlation_heatmap(frame(), schema_of(frame()))):
         assert viz.missing_glyphs(fig) == set()
+
+
+def test_missing_map_shrinks_its_labels_so_they_do_not_overlap():
+    """★40 列の日本語の列名は、既定の大きさ・45 度では重なって読めない。★
+
+    図としては描けているので例外は出ない。人が見るまで分からない壊れ方である。
+    列数から幅と字の大きさを決め、多いときは縦書きにする。
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from medprep.viz import fit_tick_labels, missing_map
+
+    df = pd.DataFrame({f"とても長い検査項目名(No{i:02d})": [1.0, None, 2.0] * 10
+                       for i in range(40)})
+    fig = missing_map(df)
+    # missingno は行列の軸とスパークラインの軸を作る。ラベルを持つほうを見る。
+    ax = next(a for a in fig.axes if a.get_xticklabels())
+    labels = ax.get_xticklabels()
+    assert fig.get_size_inches()[0] >= 13          # 列数に応じて広げている
+    assert all(t.get_rotation() == 90 for t in labels)
+    sizes = {t.get_fontsize() for t in labels}
+    assert len(sizes) == 1 and max(sizes) <= 13
+    plt.close(fig)
+
+    # 列が少なければ 45 度のままで、字も小さくしすぎない
+    small = pd.DataFrame({"年齢": [1.0, None], "Alb": [2.0, 3.0]})
+    fig2 = missing_map(small)
+    ax2 = next(a for a in fig2.axes if a.get_xticklabels())
+    assert fit_tick_labels(ax2) >= 4.5
+    plt.close(fig2)

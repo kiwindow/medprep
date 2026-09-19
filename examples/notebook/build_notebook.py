@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import sys
 
-VERSION = "Ver1_9_1"
+VERSION = "Ver2_0"
 
 C = []      # cells
 
@@ -205,7 +205,7 @@ code("""
 # ★このノートブックが必要とする medprep の版★
 #   古い medprep が入っていると、あとのセルが AttributeError で止まる。
 #   ここで版を確かめて、足りなければ**理由を言って止める**。
-REQUIRED_MEDPREP = (0, 9, 4)
+REQUIRED_MEDPREP = (0, 10, 0)
 
 if IN_COLAB:
     # -U（更新）と --no-cache-dir を付ける。付けないと、同じ版番号のまま
@@ -280,6 +280,9 @@ md("""
 選ぶ欄が出る（環境変数に書いてあるものは出ない。**書いたほうが強い**）。
 
 ★選んだ時点で反映される。このセルを実行し直す必要はない。★
+［確定する］は念のための確認用で、押さなくても同じである。
+**何も操作しなければ、プログラムが推定した既定の選択がそのまま有効になる。**
+（操作が分からなくても計算が進むようにしてある。）
 選び終えたら、そのまま次の「演習①」のセルへ進むこと。
 """)
 
@@ -362,7 +365,7 @@ def _ask_settings(d, auto=False):
 
     box, out2 = [], widgets.Output()
 
-    def _apply(_=None, skip=False, quiet=False):
+    def _apply(_=None, skip=False, quiet=False, confirmed=False):
         # ★選んだ時点で反映する。ボタンもセルの再実行も要らない。★
         #   環境変数に書いてあったものには触らない（書いたほうが強い）。
         global GROUP, OUTCOME, TASK, SURVIVAL_DATES
@@ -375,21 +378,24 @@ def _ask_settings(d, auto=False):
             trio = (w_s1.value, w_s2.value, w_s3.value)
             SURVIVAL_DATES = () if (skip or _NONE in trio) else trio
         if quiet:
-            _show()
+            _show(confirmed)
             return
         with out2:
             clear_output()
-            _show()
+            _show(confirmed)
 
-    def _show():
+    def _show(confirmed=False):
+        if confirmed:
+            print('◆ 確定した。')
         print(f'◇ GROUP          = {GROUP or "（指定なし）"}'
               '   ← 指定があれば Table 2（群間比較）を作る')
         print(f'◇ OUTCOME / TASK = {OUTCOME or "（指定なし）"} / {TASK or "（指定なし）"}')
         print(f'◇ SURVIVAL_DATES = {SURVIVAL_DATES or "（指定なし）"}')
         print('')
-        print('★選んだ時点で反映される。このセルを実行し直す必要はない。★')
+        print('★いま画面に出ている内容が、そのまま有効である。★')
+        print('   選び直した時点で反映されるので、このセルを実行し直す必要はない。')
+        print('   ［確定する］は念のための確認用で、押さなくても同じである。')
         print('   次は「◆ 2. 演習① まず全自動で走らせる」のセルを実行すること。')
-        print('   選ばなくても先へ進める（群分け無しで走り、Table 1 だけが作られる）。')
 
     if need_g:
         box.append(w_g)
@@ -405,14 +411,20 @@ def _ask_settings(d, auto=False):
 
     for w in (w_g, w_o, w_t, w_s1, w_s2, w_s3):
         w.observe(_apply, names='value')
+    b_ok = widgets.Button(description='確定する', button_style='primary', icon='check',
+                          layout=widgets.Layout(width='200px', height='38px'))
     b_no = widgets.Button(description='すべて指定しない（skip）', icon='forward',
                           layout=widgets.Layout(width='240px', height='38px'))
+    b_ok.on_click(lambda _: _apply(confirmed=True))
     b_no.on_click(lambda _: _apply(skip=True))
 
     # ★1 つの箱にまとめて display する。★ Colab では display() に複数の
     #   ウィジェットを並べて渡すと、2 つめ以降が出ないことがある。
-    display(widgets.VBox([*box, b_no, out2]))
-    _apply()          # 初期値（推定した列）をその場で反映する
+    display(widgets.VBox([*box, widgets.HBox([b_ok, b_no]), out2]))
+    # ★初期値（推定した列）をその場で反映しておく。★
+    #   操作が分からない人が何も押さずに先へ進んでも、推定どおりに計算が進む。
+    #   これは初心者のための保険である。
+    _apply()
 
 
 def _load(path):

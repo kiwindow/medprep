@@ -27,6 +27,7 @@ import os
 import time
 from dataclasses import dataclass, field
 
+import numpy as np
 import pandas as pd
 
 from . import paths as _paths
@@ -596,10 +597,48 @@ def _date_only(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _decimals(v) -> int:
+    """その列を Excel に出すとき、小数点以下を何桁見せるか。
+
+    ★小さい値が 0 に見えてはいけない。★ CRP は 0.01〜13 の幅があり、
+    桁数を 1 に固定すると 0.05 が「0.1」に、0.01 が「0.0」になる。
+    **いちばん小さい非ゼロの値が 2 桁の有効数字で読める**ところまで出す。
+    """
+    x = pd.to_numeric(pd.Series(v), errors="coerce").dropna()
+    x = x[np.isfinite(x)]
+    if x.empty:
+        return 0
+    if bool((x == x.round(0)).all()):
+        return 0                                   # 整数の列に小数点は要らない
+    nz = x[x != 0].abs()
+    if nz.empty:
+        return 1
+    import math
+    need = math.ceil(-math.log10(float(nz.min()))) + 1
+    return int(min(4, max(1, need)))
+
+
+def _fmt_sheet(ws, df) -> None:
+    """列ごとに表示書式と幅を決める。**既定のままだと小数が消えて見える。**"""
+    for j, c in enumerate(df.columns, start=1):
+        head = str(c)
+        width = min(28, max(10, len(head) + 2))
+        col = df[c]
+        if pd.api.types.is_numeric_dtype(col) and not pd.api.types.is_bool_dtype(col):
+            d = _decimals(col)
+            fmt = "0" if d == 0 else "0." + "0" * d
+            for i in range(2, len(df) + 2):
+                ws.cell(i, j).number_format = fmt
+            width = max(width, 8 + d)
+        ws.column_dimensions[ws.cell(1, j).column_letter].width = width
+
+
 def _excel(df, path, sheet_name="Sheet1") -> None:
-    """Excel に書く。★日付は年月日だけにする（00:00:00 を出さない）。★"""
+    """Excel に書く。★日付は年月日だけ、数値は小数が見える書式にする。★"""
+    out = _date_only(df)
     with pd.ExcelWriter(path, engine="openpyxl") as w:
-        _date_only(df).to_excel(w, sheet_name=sheet_name, index=False)
+        out.to_excel(w, sheet_name=sheet_name, index=False)
+        _fmt_sheet(w.sheets[sheet_name], out)
 
 
 def _save_data(res: PrepResult, p, put) -> None:
@@ -623,7 +662,9 @@ def _save_data(res: PrepResult, p, put) -> None:
     if res.df_clean is not None:
         def _clean_book(q):
             with pd.ExcelWriter(q, engine="openpyxl") as w:
-                _date_only(res.df_clean).to_excel(w, sheet_name="データ", index=False)
+                book = _date_only(res.df_clean)
+                book.to_excel(w, sheet_name="データ", index=False)
+                _fmt_sheet(w.sheets["データ"], book)
                 if res.schema is not None:
                     res.schema.to_frame().to_excel(w, sheet_name="列の扱い", index=False)
                 if res.removed is not None and len(res.removed):
@@ -633,7 +674,9 @@ def _save_data(res: PrepResult, p, put) -> None:
         if res.df_use is not None:
             def _use_book(q):
                 with pd.ExcelWriter(q, engine="openpyxl") as w:
-                    _date_only(res.df_use).to_excel(w, sheet_name="データ", index=False)
+                    book = _date_only(res.df_use)
+                    book.to_excel(w, sheet_name="データ", index=False)
+                    _fmt_sheet(w.sheets["データ"], book)
                     if res.encoded is not None and len(res.encoded):
                         res.encoded.to_excel(w, sheet_name="0と1の対応", index=False)
             put(os.path.join(d, "解析用データ.xlsx"), _use_book)

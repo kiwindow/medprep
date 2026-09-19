@@ -231,10 +231,43 @@ def _fold_levels(s: pd.Series, cap: int):
 
 
 # ================================================================== 欠損
+def fit_tick_labels(ax, *, axis: str = "x", fig_width_in: float | None = None) -> float:
+    """★目盛りラベルが重ならない字の大きさと向きを決める。★
+
+    列が 40 本あって名前が「β2マイクログロブリン(β2MG)」のように長いと、
+    既定の大きさ・45 度では**文字どうしが重なって 1 文字も読めなくなる**。
+    図としては描けているので例外は出ない。人が見て初めて分かる壊れ方である。
+
+    縦書き（90 度）にすると、横に要る幅は**字 1 つぶん**で済む。
+    1 列あたりの幅（インチ）から、その幅に収まる大きさを計算して当てる。
+    日本語は全角なので、字の幅は大きさ（pt）とほぼ同じとみなす。
+    """
+    fig = ax.get_figure()
+    labels = ax.get_xticklabels() if axis == "x" else ax.get_yticklabels()
+    n = len(labels)
+    if not n:
+        return 0.0
+    width_in = fig_width_in if fig_width_in else fig.get_size_inches()[0]
+    slot_pt = (width_in / n) * 72.0                 # 1 列あたりの幅（pt）
+    size = float(min(13.0, max(4.5, slot_pt * 0.85)))
+    longest = max((len(t.get_text()) for t in labels), default=0)
+    rot = 90 if (n > 10 or longest > 8) else 45
+    for t in labels:
+        t.set_rotation(rot)
+        t.set_fontsize(size)
+        t.set_ha("center" if rot == 90 else "left")
+        t.set_va("bottom")
+    return size
+
+
 def missing_map(df: pd.DataFrame, schema: Schema | None = None, *,
                 columns: list | None = None, kind: str = "matrix",
-                save=None, figsize=(10, 5)):
-    """欠損の地図。どの症例でどの列が同時に欠けるかを見る。"""
+                save=None, figsize=None):
+    """欠損の地図。どの症例でどの列が同時に欠けるかを見る。
+
+    ★図の幅と字の大きさは列数から決める。★ 既定のまま 40 列を描くと
+    列名が重なって読めない（例外は出ないので、人が見るまで気づかない）。
+    """
     _fontja()
     import matplotlib.pyplot as plt
     import missingno as msno
@@ -244,10 +277,18 @@ def missing_map(df: pd.DataFrame, schema: Schema | None = None, *,
           "heatmap": msno.heatmap, "dendrogram": msno.dendrogram}.get(kind)
     if fn is None:
         raise ValueError("kind は matrix / bar / heatmap / dendrogram のいずれか")
+    if figsize is None:
+        n = max(1, len(cols))
+        longest = max((len(str(c)) for c in cols), default=8)
+        # 1 列あたり 0.34 インチ。名前が長いほど上の余白も要る。
+        figsize = (min(26.0, max(10.0, 0.34 * n)),
+                   min(11.0, 5.0 + 0.11 * min(longest, 24)))
     kw = {"color": _hex_to_rgb(PALETTE.categorical[0])} if kind in ("matrix", "bar") else {}
     ax = fn(df[cols], figsize=figsize, **kw)
     fig = ax.get_figure() if hasattr(ax, "get_figure") else plt.gcf()
     fig.patch.set_facecolor(PALETTE.surface)
+    if kind in ("matrix", "bar"):
+        fit_tick_labels(ax, fig_width_in=figsize[0])
     import warnings as _w
     with _w.catch_warnings():
         _w.simplefilter("ignore")

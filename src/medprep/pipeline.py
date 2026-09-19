@@ -412,7 +412,30 @@ class Preprocessor:
         self.record.n_fit = len(X)
         self.record.fit_kind = kind or "（印なし）"
         self.record.feature_names = list(self.ct.get_feature_names_out())
+        self._warn_constant(X)
         return self
+
+    def _warn_constant(self, X: pd.DataFrame) -> None:
+        """★出来上がった行列に、値が 1 つしかない列が無いか確かめる。★
+
+        前処理の途中で列が潰れても**例外は出ない**。スケーリング後は全例きっかり 0 に
+        なり、見た目は正常なまま、その変数だけがモデルから消える。
+        実際、IQR = 0 の列を winsorize して潰していた（透析時間は 4.0 が 6 割）。
+        直したあとも、同じことが別の経路で起きないよう、ここで見張る。
+        """
+        try:
+            out = self.ct.transform(X)
+        except Exception:                                            # noqa: BLE001
+            return
+        out = pd.DataFrame(out)
+        num = out.select_dtypes("number")
+        dead = [c for c in num.columns if float(num[c].std(ddof=0)) == 0.0]
+        if dead:
+            msg = ("前処理のあと、値が 1 つしかない列がある: "
+                   + "、".join(map(str, dead[:10]))
+                   + "。**この変数はモデルに何も伝えない。**"
+                   " 元の列の分布と、外れ値処理の閾値を確かめること")
+            self.record.warnings.append(msg)
 
     # -------------------------------------------------------------- transform
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:

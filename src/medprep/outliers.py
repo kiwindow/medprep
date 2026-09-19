@@ -55,6 +55,14 @@ def iqr_limits(x, fold: float = 1.5) -> tuple[float, float]:
         return float("-inf"), float("inf")
     q1, q3 = float(v.quantile(0.25)), float(v.quantile(0.75))
     iqr = q3 - q1
+    if iqr <= 0:
+        # ★IQR が 0 になる列がある。★ 値が数種類しかない列では Q1 = Q3 になる。
+        #   透析時間は 4.0 時間が 6 割を占めるので、まさにこれに当たる。
+        #   そのまま閾値にすると上下限が同じ値になり、**列全体が 1 つの値に潰れる**。
+        #   分散 0 になるのでスケーリング後は全例きっかり 0 になり、
+        #   **例外は出ないまま、その変数だけがモデルから消える。**
+        #   閾値を作らないのが正しい（MAD 法も同じ理由で 0 を弾いている）。
+        return float("-inf"), float("inf")
     return q1 - fold * iqr, q3 + fold * iqr
 
 

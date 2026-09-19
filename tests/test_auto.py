@@ -572,3 +572,26 @@ def test_the_report_explains_the_three_files(isolated):
 def test_outputs_is_empty_without_saving():
     rep = run(outcome="転帰", task="classification")
     assert rep.outputs is not None and len(rep.outputs) == 0
+
+
+# ---------------------------------------------------------------- 書き出し書式
+def test_small_numbers_keep_their_decimals_in_excel(tmp_path):
+    """★小さい値が 0 に見えてはいけない。★
+
+    CRP は 0.01〜13 の幅がある。既定の書式のままだと、表示環境によっては
+    0.05 が「0」に見える。列ごとに、いちばん小さい非ゼロの値が読める桁数を当てる。
+    """
+    from openpyxl import load_workbook
+
+    from medprep.auto import _decimals, _excel
+
+    assert _decimals([0.01, 0.05, 2.96, 12.97]) == 3
+    assert _decimals([65, 70, 80]) == 0
+    assert _decimals([2.1, 3.6, 4.8]) == 1
+
+    d = pd.DataFrame({"CRP": [0.01, 0.05, 2.96], "年齢": [65, 70, 80]})
+    path = tmp_path / "t.xlsx"
+    _excel(d, path)
+    ws = load_workbook(path).active
+    assert ws.cell(2, 1).number_format == "0.000"
+    assert ws.cell(2, 2).number_format == "0"

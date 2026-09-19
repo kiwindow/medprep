@@ -38,7 +38,10 @@ def test_dialysis_times_are_given_as_clock_times_not_as_hours():
     out, _ = derive_dialysis(df)
     h = out["透析時間(hr)"].dropna()
     assert len(h) == len(df)
-    assert h.between(3.4, 5.1).all()
+    assert h.between(2.9, 5.6).all()
+    assert 3.5 <= float(h.median()) <= 4.5      # 中央値は 4 時間あたり
+    assert int((h >= 5.0).sum()) > 0            # 5 時間前後の症例も含む
+    assert h.nunique() >= 6                     # ★IQR が 0 にならない★
 
 
 def test_iron_studies_exist_so_that_tsat_can_be_derived():

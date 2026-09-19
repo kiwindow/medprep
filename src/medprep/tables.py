@@ -379,12 +379,14 @@ def _rule_only(tbl) -> None:
 _SKIP_EXACT = ("除外推奨", "除外推奨_理由")
 #: 掃除の過程で付けた内部フラグ。**人が読む表には出さない。**
 _SKIP_PATTERNS = ("__censored_low", "__censored_high", "__unit_converted")
+_SKIP_PREFIX_JA = ("検出限界未満_", "検出限界超_")
 _SKIP_PREFIX = ("欠損あり_",)
 
 
 def _is_internal(col: str) -> bool:
     c = str(col)
     return (c in _SKIP_EXACT or c.startswith(_SKIP_PREFIX)
+            or c.startswith(_SKIP_PREFIX_JA)
             or any(pat in c for pat in _SKIP_PATTERNS))
 
 
