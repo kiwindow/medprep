@@ -142,11 +142,39 @@ def test_word_separates_japanese_and_english_pages(tmp_path):
     assert any(t.startswith("Table 1.") for t in texts)
 
 
+def test_every_cell_is_centred_horizontally_and_vertically(tmp_path):
+    """★左右だけでなく上下も中央。★ 既定は上詰め（Excel は下詰め）で、
+    2 行に折り返したセルと 1 行のセルとで文字の高さが揃わない。
+    """
+    from docx import Document
+    from docx.enum.table import WD_ALIGN_VERTICAL
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from openpyxl import load_workbook
+
+    gs = built(group="施設")
+    doc = Document(gs.to_docx(tmp_path / "t.docx"))
+    for t in doc.tables:
+        for row in t.rows:
+            for cell in row.cells:
+                assert cell.vertical_alignment == WD_ALIGN_VERTICAL.CENTER
+                for par in cell.paragraphs:
+                    assert par.alignment == WD_ALIGN_PARAGRAPH.CENTER
+
+    # 表題と脚注は行いっぱいに結合してあるので、値を持つのは A 列だけ。
+    # B 列から先に値があるセルは、かならず表の中身である。
+    ws = load_workbook(gs.to_excel(tmp_path / "t.xlsx"))["日本語"]
+    body = [c for row in ws.iter_rows(min_col=2) for c in row if c.value]
+    assert body
+    for c in body:
+        assert (c.alignment.horizontal, c.alignment.vertical) == ("center", "center")
+
+
 def test_html_is_centred_and_pasteable():
     """Word に貼れる HTML。配置は中詰め。"""
     gs = built()
     h = gs.to_html("ja")
     assert "<table" in h and "text-align:center" in h
+    assert "vertical-align:middle" in h
     assert h.count("<tr>") == len(gs.table1.frame_ja) + 1      # 見出し行ぶん
 
 

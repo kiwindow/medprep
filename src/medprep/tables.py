@@ -171,8 +171,8 @@ class GTTable:
 
 _TABLE = "border-collapse:collapse;margin:0 auto;"
 _TH = ("border-top:1.5pt solid #000;border-bottom:1pt solid #000;"
-       "padding:4px 10px;text-align:center;font-weight:bold;")
-_TD = "border:none;padding:3px 10px;text-align:center;"
+       "padding:4px 10px;text-align:center;vertical-align:middle;font-weight:bold;")
+_TD = "border:none;padding:3px 10px;text-align:center;vertical-align:middle;"
 _CAP = "text-align:center;font-weight:bold;margin:6px 0;"
 _FN = "text-align:left;font-size:9pt;margin:4px 0 14px 0;"
 
@@ -206,6 +206,8 @@ class GTSummary:
 
         wb = Workbook()
         thick, thin = Side(style="medium"), Side(style="thin")
+        # ★左右だけでなく上下も中央に。★ 既定は下詰めで、折り返した行と
+        #   1 行の行とで文字の高さが揃わない。
         centre = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
         for i, (lang, sheet) in enumerate((("ja", "日本語"), ("en", "English"))):
@@ -255,7 +257,7 @@ class GTSummary:
         """
         from docx import Document
         from docx.enum.section import WD_ORIENT, WD_SECTION
-        from docx.enum.table import WD_TABLE_ALIGNMENT
+        from docx.enum.table import WD_ALIGN_VERTICAL, WD_TABLE_ALIGNMENT
         from docx.enum.text import WD_ALIGN_PARAGRAPH
         from docx.shared import Pt
 
@@ -287,6 +289,9 @@ class GTSummary:
                 for j, c in enumerate(f.columns):
                     cell = tbl.rows[0].cells[j]
                     cell.width = widths[j]
+                    # ★左右だけでなく上下も中央に。★ 既定は上詰めなので、
+                    #   2 行に折り返したセルと 1 行のセルで文字の高さが揃わない。
+                    cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
                     p_ = cell.paragraphs[0]
                     p_.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     r = p_.add_run(str(c))
@@ -296,6 +301,7 @@ class GTSummary:
                     cells = tbl.add_row().cells
                     for j, v in enumerate(row):
                         cells[j].width = widths[j]
+                        cells[j].vertical_alignment = WD_ALIGN_VERTICAL.CENTER
                         p_ = cells[j].paragraphs[0]
                         p_.alignment = WD_ALIGN_PARAGRAPH.CENTER
                         r = p_.add_run(v)
