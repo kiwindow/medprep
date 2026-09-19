@@ -422,6 +422,18 @@ def autoprep(
             warn(f"リーク検査で問題: {r['検査']}  {r['内容']}")
     elif want_split:
         step("train / test に分ける", False, "outcome が指定されていない")
+    else:
+        # ★飛ばした段を黙って消さない。★
+        #   目的変数が無ければ「何を予測するのか」が決まらないので、分割にも
+        #   前処理済みの行列にも意味がない。**しかし黙って消すと、
+        #   「前処理済み_train.xlsx が無い」とだけ見えて理由が分からなくなる。**
+        step("train / test に分ける", False,
+             "★目的変数（OUTCOME）の指定が無いので分割しない。"
+             "data/前処理済み_train.xlsx と _test.xlsx は作られない★")
+        res.notes.append(
+            "目的変数を指定しなかったので、前処理済みの行列（train / test）は作って"
+            "いない。予測するものが決まっていなければ、分割にも標準化にも意味がない。"
+            "演習⑦で目的変数を作ってから、もう一度 autoprep を走らせること")
 
     # -------------------------------------------------------- 11.4) 行に印を付ける
     #   ★行は削除しない。印を付けるだけ。★
@@ -882,6 +894,9 @@ def _outputs_table(res: PrepResult, *, save: bool, save_data: bool) -> pd.DataFr
         rows.append({"ファイル": name, "行": rows_txt, "列": cols_txt,
                      "施した処置": steps, "使いどころ": use})
 
+    if res.df_raw is not None:
+        add("data/元データ.xlsx", f"{n_raw}（元と同じ）", f"{res.df_raw.shape[1]}（全列）",
+            "★何もしていない（前処理前のまま）★", "掃除の前と後を突き合わせる")
     if res.df_clean is not None:
         add("data/掃除済みデータ.xlsx",
             f"{len(res.df_clean)}（元と同じ）", f"{res.df_clean.shape[1]}（全列）",
@@ -896,6 +911,11 @@ def _outputs_table(res: PrepResult, *, save: bool, save_data: bool) -> pd.DataFr
                 f"{len(keep)}（落とす列を除く）", use_steps,
                 "自分で解析する。行が減っていないので元データと axis=1 で結合できる")
 
+    if res.prepared is None:
+        add("data/前処理済み_train.xlsx / _test.xlsx", "—", "—",
+            "★作っていない★",
+            "目的変数（OUTCOME）の指定が無いため。"
+            "予測するものが決まっていなければ分割にも標準化にも意味がない")
     if res.prepared is not None:
         add("data/前処理済み_train.xlsx",
             f"{len(res.X_train)}（★部分集合★）", f"{res.X_train.shape[1]}（特徴量のみ）",

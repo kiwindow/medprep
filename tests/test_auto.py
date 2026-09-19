@@ -631,3 +631,31 @@ def test_the_untouched_original_is_saved_too(tmp_path):
     assert len(raw) == len(df)
     assert list(raw.columns) == list(df.columns)
     assert any("元データ" in f for f in rep.saved)
+
+
+def test_it_says_why_there_is_no_train_test_when_no_outcome_was_given():
+    """★飛ばした段を黙って消さない。★
+
+    目的変数が無ければ分割にも標準化にも意味がないので作らない。しかし黙って
+    消すと「前処理済み_train.xlsx が無い」とだけ見えて、**理由が分からなくなる**。
+    """
+    rep = run(frame())                     # outcome を渡さない
+    entry = [(n, d) for n, _ok, d in rep.steps if n == "train / test に分ける"]
+    assert entry, "段そのものが記録に残っていない"
+    assert "目的変数" in entry[0][1] and "前処理済み" in entry[0][1]
+    assert any("前処理済みの行列" in n for n in rep.notes)
+    assert rep.prepared is None
+
+
+def test_the_outputs_table_lists_the_file_it_did_not_make(tmp_path):
+    """作らなかったファイルも表に出す。**空欄は「無い」の説明にならない。**"""
+    run(frame(), save=True, out_dir=str(tmp_path), method="T")
+    import glob
+    book = glob.glob(str(tmp_path / "T" / "run1" / "table" / "書き出したデータの説明.xlsx"))
+    assert book
+    t = pd.read_excel(book[0])
+    names = " ".join(t["ファイル"].astype(str))
+    assert "元データ.xlsx" in names
+    assert "前処理済み_train.xlsx" in names
+    row = t[t["ファイル"].astype(str).str.contains("前処理済み")].iloc[0]
+    assert "作っていない" in str(row["施した処置"])
