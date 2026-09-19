@@ -729,3 +729,55 @@ def test_the_cases_flagged_for_exclusion_are_listed_in_their_own_sheet(tmp_path)
     dat = load_workbook(tmp_path / "T" / "run1" / "data" / "掃除済みデータ.xlsx")["データ"]
     assert not any(dat.cell(2, j).alignment.wrap_text
                    for j in range(1, dat.max_column + 1))
+
+
+def test_rows_that_are_entirely_blank_are_kept_unless_the_user_asks(tmp_path):
+    """★既定では 1 行も削除しない。★
+
+    行を削除すると症例数と並びが変わり、元のデータと症例ごとに `axis=1` で
+    結合し直せなくなる。全セルが空欄の行だけは消したい人がいるので選べるが、
+    **黙っては消さない。何行目を消したかを残す。**
+    """
+    import numpy as np
+    from openpyxl import load_workbook
+
+    df = _survival_frame(60)
+    # 全セルが空欄の行を 3 本。NaN・空文字・全角空白は**どれも空である**
+    blanks = pd.DataFrame([dict.fromkeys(df.columns, np.nan),
+                           dict.fromkeys(df.columns, ""),
+                           dict.fromkeys(df.columns, "　")])
+    mixed = pd.concat([df.iloc[:20], blanks, df.iloc[20:]], ignore_index=True)
+
+    # --- 既定：削除しない。ただし**見つけたことは必ず言う**
+    keep = run(mixed, survival_dates=("開始日", "発生日", "打切日"),
+               save=False, method="T")
+    assert len(keep.df_clean) == len(mixed)
+    assert keep.dropped_rows is None
+    assert any("空欄" in w for w in keep.warnings)
+    assert any(n == "全セルが空欄の行を削除する" and not ok and "3 行" in d
+               for n, ok, d in keep.steps)
+
+    # --- True：削除する。**何行目を消したかが残る**
+    gone = run(mixed, survival_dates=("開始日", "発生日", "打切日"),
+               drop_empty_rows=True, save=True, out_dir=str(tmp_path), method="U")
+    assert len(gone.df_clean) == len(mixed) - 3
+    assert len(gone.dropped_rows) == 3
+    assert list(gone.dropped_rows["元の行"]) == [20, 21, 22]
+    assert list(gone.dropped_rows["Excel の行"]) == [22, 23, 24]   # 見出しが 1 行目
+
+    book = tmp_path / "U" / "run1" / "table" / "除外の記録.xlsx"
+    assert load_workbook(book).sheetnames == [
+        "まとめ", "削除した行", "外すのが望ましい症例", "解析から外す列"]
+    sheet = pd.read_excel(book, sheet_name="削除した行")
+    assert list(sheet["Excel の行"]) == [22, 23, 24]
+
+    # まとめの一番上は★本当に削除したもの★（これだけが取り返しがつかない）
+    top = gone.removed.iloc[0]
+    assert top["種類"] == "行" and "削除した" in top["処置"] and top["件数"] == 3
+
+    # 「元と同じ」と書いてはいけない
+    txt = " ".join(gone.outputs["行"].astype(str))
+    assert "空行 3 行を削除" in txt
+
+    # ★中身のある行は 1 行も消えていない★
+    assert set(map(str, gone.df_clean["仮名ID"])) == set(map(str, df["仮名ID"]))

@@ -137,17 +137,40 @@ def _header_row(probe: pd.DataFrame, max_scan: int = 10) -> int:
 
 
 def _drop_empty(df: pd.DataFrame, notes: list) -> pd.DataFrame:
-    """完全に空の列・行を落とす（Excel の余白がそのまま列になることがある）。"""
+    """完全に空の列と、**表の末尾にぶら下がった空行**を落とす。
+
+    Excel は一度でも触ったセルを「使った範囲」に数えるので、表の下に
+    何も無い行が何百も付いてくることがある。**あれは症例ではない。**
+
+    ★表の途中にある空行には手を触れない。★
+    そこに空行があるのは入力の事故であって、消してよいかは人が決める。
+    黙って消すと症例数と並びが変わり、元の記録と突き合わせられなくなる。
+    消したい人は `autoprep(..., drop_empty_rows=True)` と**自分で言う**。
+    """
     empty_cols = [c for c in df.columns if df[c].isna().all()]
     if empty_cols:
         df = df.drop(columns=empty_cols)
         notes.append(f"中身が空の列を {len(empty_cols)} 本落とした: "
                      + "、".join(str(c) for c in empty_cols[:5])
                      + ("…" if len(empty_cols) > 5 else ""))
-    n0 = len(df)
-    df = df.dropna(how="all").reset_index(drop=True)
-    if len(df) < n0:
-        notes.append(f"中身が空の行を {n0 - len(df)} 行落とした")
+
+    blank = df.isna().all(axis=1)
+    # 末尾から数えて、続けて空になっている行だけが「表の外」である
+    tail = 0
+    for i in range(len(df) - 1, -1, -1):
+        if not bool(blank.iloc[i]):
+            break
+        tail += 1
+    if tail:
+        df = df.iloc[:len(df) - tail]
+        notes.append(f"表の末尾にぶら下がった空行を {tail} 行落とした"
+                     "（Excel の『使った範囲』の名残り）")
+    df = df.reset_index(drop=True)
+
+    inside = int(df.isna().all(axis=1).sum())
+    if inside:
+        notes.append(f"★表の途中に、全てのセルが空欄の行が {inside} 行ある★"
+                     "（削除していない。消すなら drop_empty_rows=True）")
     return df
 
 

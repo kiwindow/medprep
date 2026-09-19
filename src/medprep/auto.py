@@ -90,6 +90,7 @@ class PrepResult:
     outputs: pd.DataFrame | None = None     # 書き出すファイルと、そこまでに施した処置
     encoded: pd.DataFrame | None = None     # 0/1 に直した二値の列（何を 1 にしたか）
     df_use: pd.DataFrame | None = None      # 解析用データ（列を落とし、二値を 0/1 に）
+    dropped_rows: pd.DataFrame | None = None  # ★本当に削除した行★（全セルが空欄）
     dropped_outcome: dict = field(default_factory=dict)
     warnings: list = field(default_factory=list)
     notes: list = field(default_factory=list)
@@ -197,6 +198,7 @@ def autoprep(
     test_size: float = 0.2,
     seed: int = 0,
     clean: bool = True,
+    drop_empty_rows: bool = False,
     do_split: bool | str = "auto",
     do_table1: bool = True,
     do_figures: bool = True,
@@ -219,6 +221,11 @@ def autoprep(
     outcome, task : 目的変数と課題（'regression' / 'classification' / 'survival'）
     group : 群間比較・グループ分割に使う列（施設など）
     survival_dates : (観察開始日, イベント発生日, 打ち切り日) の 3 列
+    drop_empty_rows : True なら**全てのセルが空欄の行を削除する**（既定は False）。
+        ★行を削除すると症例数と並びが変わり、元のデータと `axis=1` で
+        結合し直せなくなる。★ だから既定ではしない。True にしたときは
+        削除した行の一覧を `res.dropped_rows` と
+        `除外の記録.xlsx` の「削除した行」シートに残す。
     do_split : "auto" なら `outcome` があるときだけ分割して前処理まで行う
     save : True なら `~/lab_output/{method}/run{N}/` 以下に全出力を保存する
     save_data : `save=True` のとき、掃除済みデータと前処理済み行列も書き出す。
@@ -259,6 +266,13 @@ def autoprep(
             if "★" in n:
                 warn(n)
     df = res.df_raw
+
+    # -------------------------------------------------------- 1.5) 全部空欄の行
+    #   ★既定では削除しない。★ 行を削除すると症例数と並びが変わり、
+    #   元のデータと症例ごとに axis=1 で結合し直せなくなる。
+    #   それでも、全てのセルが空欄の行は症例ですらない。消したい人のために
+    #   選べるようにする。**ただし黙っては消さない。** 何行目を消したかを残す。
+    df, res.dropped_rows = _drop_empty_rows(df, drop_empty_rows, step, warn)
 
     # -------------------------------------------------------- 2) 役割の推定
     res.schema_raw = Schema.infer(
@@ -646,6 +660,62 @@ def _decimals(v) -> int:
     return int(min(4, max(2, need)))
 
 
+#: 全セルが空欄の行を削除したときの処置の言葉。
+ROW_DROPPED = "★削除した（行が消える）★"
+
+
+def _blank_mask(df: pd.DataFrame) -> pd.DataFrame:
+    """セルが空かどうか。★空白だけの文字列も空とみなす。★
+
+    Excel の「見た目は空の行」は、NaN のこともあれば `''` や全角空白の
+    こともある。`isna()` だけで見ると、後者が**残ってしまう**。
+    """
+    m = df.isna()
+    for c in df.columns:
+        if df[c].dtype == object:
+            m[c] = m[c] | df[c].map(
+                lambda v: isinstance(v, str) and not v.strip().strip("\u3000"))
+    return m
+
+
+def _drop_empty_rows(df: pd.DataFrame, do_it: bool, step, warn):
+    """**全てのセルが空欄の行**を削除する（`do_it` が True のときだけ）。
+
+    ★既定では削除しない。★ 行を削除すると症例数と並びが変わり、
+    元のデータと症例ごとに `axis=1` で結合し直せなくなる。
+
+    ★見つけたことは、削除するかどうかに関わらず必ず言う。★
+    黙って残すのも、黙って消すのも、どちらも同じくらい困る。
+    """
+    name = "全セルが空欄の行を削除する"
+    empty = _blank_mask(df).all(axis=1)
+    n = int(empty.sum())
+
+    if not do_it:
+        if n:
+            detail = (f"★{n} 行ある（削除していない）★  "
+                      "消すなら DROP_EMPTY_ROWS = True")
+            warn(f"全てのセルが空欄の行が {n} 行ある。"
+                 "既定では削除しない（DROP_EMPTY_ROWS = True で削除する）")
+        else:
+            detail = "しない（既定）。該当する行も無い"
+        step(name, False, detail)
+        return df, None
+
+    hit = df.index[empty]
+    pos = [int(i) + 2 for i in range(len(df)) if bool(empty.iloc[i])]
+    book = pd.DataFrame({
+        "元の行": list(hit),
+        "Excel の行": pos,                 # 見出しが 1 行目にある前提
+        "理由": ["全てのセルが空欄"] * n,
+    })
+    step(name, True, f"{n} 行を削除した（{len(df)} 行 → {len(df) - n} 行）")
+    if n:
+        warn(f"全てのセルが空欄の行を {n} 行削除した。"
+             "削除した行は「除外の記録.xlsx」の『削除した行』シートにある")
+    return df[~empty].copy(), book
+
+
 def _cell_width(s: str) -> int:
     """Excel の桁数でいう見た目の幅。★日本語は 2 桁分を占める。★
 
@@ -1005,13 +1075,21 @@ def removed_columns(res: PrepResult) -> pd.DataFrame:
 
 
 def _removed_book(res: PrepResult):
-    """`除外の記録.xlsx` を書く。**まとめ・症例・列の 3 枚組。**"""
+    """`除外の記録.xlsx` を書く。**まとめ・（削除した行）・症例・列。**
+
+    「削除した行」は `drop_empty_rows=True` を選んだときだけ足す。
+    ★選んでいないのに空のシートがあると、消えたのかと人が心配する。★
+    """
     def _write(q):
         cases = excluded_cases(res)
         cols = removed_columns(res)
         with pd.ExcelWriter(q, engine="openpyxl") as w:
             res.removed.to_excel(w, sheet_name="まとめ", index=False)
             _fmt_sheet(w.sheets["まとめ"], res.removed, wrap=True)
+            if res.dropped_rows is not None:
+                gone = res.dropped_rows
+                gone.to_excel(w, sheet_name="削除した行", index=False)
+                _fmt_sheet(w.sheets["削除した行"], gone, wrap=True)
             book = _date_only(cases)
             book.to_excel(w, sheet_name="外すのが望ましい症例", index=False)
             _fmt_sheet(w.sheets["外すのが望ましい症例"], book, wrap=True)
@@ -1026,7 +1104,9 @@ def _outputs_table(res: PrepResult, *, save: bool, save_data: bool) -> pd.DataFr
     「掃除済み」「解析用」「前処理済み」は、**施した処置が 1 段ずつ違う。**
     どれを使えばよいか分からないまま渡されるのがいちばん困るので、表にして出す。
     """
-    clean_steps = ("① 欠損コード（999 等）と『未測定』を NaN に　"
+    zero = ("⓪ **全てのセルが空欄の行を削除**（drop_empty_rows=True のときだけ）　"
+            if res.dropped_rows is not None else "")
+    clean_steps = (zero + "① 欠損コード（999 等）と『未測定』を NaN に　"
                    "② 検出限界（<0.1）を数値化　③ 単位の混在を換算　"
                    "④ 生理学的にあり得ない値を NaN に　⑤ 派生指標を追加（補正Ca 等）　"
                    "⑥ 日付を解釈（和暦・全角・シリアル値）　⑦ 外すのが望ましい行に印")
@@ -1039,6 +1119,10 @@ def _outputs_table(res: PrepResult, *, save: bool, save_data: bool) -> pd.DataFr
                   "（★⑪〜⑬ は train だけで fit★）")
 
     n_raw = len(res.df_raw) if res.df_raw is not None else 0
+    n_gone = 0 if res.dropped_rows is None else len(res.dropped_rows)
+    # ★行を削除したなら「元と同じ」と書いてはいけない。★ そこが一番大事な差である。
+    same = (f"{n_raw - n_gone}（★空行 {n_gone} 行を削除★）" if n_gone
+            else f"{n_raw}（元と同じ）")
     rows = []
 
     def add(name, rows_txt, cols_txt, steps, use):
@@ -1050,7 +1134,7 @@ def _outputs_table(res: PrepResult, *, save: bool, save_data: bool) -> pd.DataFr
             "★何もしていない（前処理前のまま）★", "掃除の前と後を突き合わせる")
     if res.df_clean is not None:
         add("data/掃除済みデータ.xlsx",
-            f"{len(res.df_clean)}（元と同じ）", f"{res.df_clean.shape[1]}（全列）",
+            same, f"{res.df_clean.shape[1]}（全列）",
             clean_steps,
             "人が読む。元の記録と症例ごとに突き合わせる（ID が残っている）")
         if res.schema is not None:
@@ -1058,7 +1142,7 @@ def _outputs_table(res: PrepResult, *, save: bool, save_data: bool) -> pd.DataFr
             keep += [c for c in (EXCLUDE_FLAG, EXCLUDE_REASON)
                      if c in res.df_clean.columns and c not in keep]
             add("data/解析用データ.xlsx",
-                f"{len(res.df_clean)}（元と同じ）",
+                same,
                 f"{len(keep)}（落とす列を除く）", use_steps,
                 "自分で解析する。行が減っていないので元データと axis=1 で結合できる")
 
@@ -1136,8 +1220,18 @@ def _removed_table(res: PrepResult, dfc, outcome) -> pd.DataFrame:
 
     ★行は削除しない。★ 削除すると症例数と並びが変わり、元のデータと
     症例ごとに axis=1 で結合し直せなくなる。行には印を付けるだけにする。
+
+    例外は `drop_empty_rows=True` を**人が選んだとき**の空行だけである。
     """
     rows = []
+
+    # --- 行：本当に削除したもの（★人が drop_empty_rows=True を選んだときだけ★）
+    if res.dropped_rows is not None and len(res.dropped_rows):
+        rows.append({"種類": "行", "対象": "全てのセルが空欄の行",
+                     "件数": len(res.dropped_rows),
+                     "処置": ROW_DROPPED,
+                     "理由": "全てのセルが空欄（drop_empty_rows=True を指定）",
+                     "段": "空行の削除"})
 
     # --- 列：役割の推定で解析から外したもの
     if res.schema is not None:
@@ -1185,7 +1279,9 @@ def _removed_table(res: PrepResult, dfc, outcome) -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
     out = pd.DataFrame(rows, columns=cols)
     order = {"列": 0, "行": 1, "値": 2}
-    return (out.assign(_o=out["種類"].map(order))
+    # ★本当に削除したものは必ず一番上に置く。★ これだけが取り返しがつかない。
+    o = out["種類"].map(order).where(out["処置"] != ROW_DROPPED, -1)
+    return (out.assign(_o=o)
                .sort_values(["_o", "件数"], ascending=[True, False])
                .drop(columns="_o").reset_index(drop=True))
 

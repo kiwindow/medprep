@@ -94,12 +94,18 @@ def test_empty_columns_are_dropped_and_reported(tmp_path):
     assert any("空の列" in n for n in out.attrs["medprep_read"])
 
 
-def test_empty_rows_are_dropped_and_reported(tmp_path):
+def test_a_blank_row_in_the_middle_is_reported_but_not_dropped(tmp_path):
+    """★表の途中の空行は残す。★ 消してよいかは人が決めることである。
+
+    以前はここで黙って消していた。そうすると症例数と並びが変わり、
+    元の記録と症例ごとに突き合わせられなくなる。
+    """
     p = tmp_path / "a.csv"
     p.write_text("仮名ID,年齢,施設\nP001,68,A院\n,,\nP002,72,B院\n", encoding="utf-8")
     out = read_any(p)
-    assert len(out) == 2
-    assert any("空の行" in n for n in out.attrs["medprep_read"])
+    assert len(out) == 3                     # ★消していない★
+    assert bool(out.iloc[1].isna().all())
+    assert any("途中" in n for n in out.attrs["medprep_read"])
 
 
 def test_duplicate_column_names_are_flagged(tmp_path):
@@ -114,3 +120,50 @@ def test_the_source_path_is_kept(tmp_path):
     p = tmp_path / "a.csv"
     frame().to_csv(p, index=False)
     assert read_any(p).attrs["medprep_source"] == str(p)
+
+
+def test_blank_rows_inside_the_table_are_not_dropped_on_read(tmp_path):
+    """★表の途中の空行を、読み込みが黙って消してはいけない。★
+
+    末尾にぶら下がった空行は Excel の「使った範囲」の名残りで症例ではない。
+    しかし**表の途中**にある空行は入力の事故であって、消してよいかは人が決める。
+    黙って消すと症例数と並びが変わり、元の記録と突き合わせられなくなる。
+    """
+    import numpy as np
+
+    from medprep import read_any
+
+    df = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    blank = pd.DataFrame([dict.fromkeys(df.columns, np.nan)])
+    mixed = pd.concat([df.iloc[:2], blank, df.iloc[2:], blank, blank],
+                      ignore_index=True)
+    p = tmp_path / "x.xlsx"
+    mixed.to_excel(p, index=False)
+
+    got = read_any(p)
+    # 末尾の空行は、そもそも Excel に書かれずに消えている（3 行 + 途中の空行 1 行）
+    assert len(got) == 4
+    assert bool(got.iloc[2].isna().all())      # ★途中の空行は残っている★
+    assert "途中" in " ".join(got.attrs.get("medprep_read", []))
+
+
+def test_blank_rows_hanging_below_the_table_are_dropped():
+    """★表の下にぶら下がった空行は症例ではない。★
+
+    Excel は一度触ったセルを「使った範囲」に数えるので、表の下に
+    何も無い行が付いてくることがある。あれは落としてよい（落としたことは言う）。
+    表の**途中**の空行とは扱いが違うので、そこを取り違えないこと。
+    """
+    import numpy as np
+
+    from medprep.loading import _drop_empty
+
+    df = pd.DataFrame({"a": [1, np.nan, 2, np.nan, np.nan],
+                       "b": ["x", np.nan, "y", np.nan, np.nan]})
+    notes: list = []
+    got = _drop_empty(df, notes)
+
+    assert len(got) == 3                       # 末尾の 2 行だけが落ちる
+    assert bool(got.iloc[1].isna().all())      # 途中の 1 行は残る
+    joined = " ".join(notes)
+    assert "末尾" in joined and "途中" in joined   # どちらも黙っていない

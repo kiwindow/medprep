@@ -80,7 +80,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.10.6"
+__version__ = "0.10.7"
 __author__ = "Kazuhiro Iwadoh"
 __license__ = "MIT"
 
