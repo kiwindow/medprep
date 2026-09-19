@@ -200,7 +200,7 @@ code("""
 # ★このノートブックが必要とする medprep の版★
 #   古い medprep が入っていると、あとのセルが AttributeError で止まる。
 #   ここで版を確かめて、足りなければ**理由を言って止める**。
-REQUIRED_MEDPREP = (0, 9, 2)
+REQUIRED_MEDPREP = (0, 9, 3)
 
 if IN_COLAB:
     # -U（更新）と --no-cache-dir を付ける。付けないと、同じ版番号のまま
@@ -270,6 +270,12 @@ md("""
 
 - **記号・単位・全角・和暦が混ざっていてよい。** どう解釈したかは必ず記録に残る。
 - ボタンを押すまで `df`（データ）は空のままで、**先のセルは止まる**。
+
+読み込むと、そのすぐ下に **GROUP（群分け）・OUTCOME・TASK・生存時間の 3 列**を
+選ぶ欄が出る（環境変数に書いてあるものは出ない。**書いたほうが強い**）。
+
+★選んだ時点で反映される。このセルを実行し直す必要はない。★
+選び終えたら、そのまま次の「演習①」のセルへ進むこと。
 """)
 
 code("""
@@ -354,27 +360,33 @@ def _ask_settings(d, auto=False):
     box, out2 = [], widgets.Output()
 
     def _apply(_=None, skip=False, quiet=False):
+        # ★選んだ時点で反映する。ボタンもセルの再実行も要らない。★
+        #   環境変数に書いてあったものには触らない（書いたほうが強い）。
         global GROUP, OUTCOME, TASK, SURVIVAL_DATES
-        with (contextlib.nullcontext() if quiet else out2):
-            if not quiet:
-                clear_output()
-            if not skip:
-                if need_g and w_g.value != _NONE:
-                    GROUP = w_g.value
-                if need_o and w_o.value != _NONE:
-                    OUTCOME = w_o.value
-                if need_o and w_t.value != _NONE:
-                    TASK = w_t.value
-                trio = (w_s1.value, w_s2.value, w_s3.value)
-                if need_s and all(x != _NONE for x in trio):
-                    SURVIVAL_DATES = trio
-            print(f'◇ GROUP          = {GROUP or "（指定なし）"}'
-                  '   ← 指定があれば Table 2（群間比較）を作る')
-            print(f'◇ OUTCOME / TASK = {OUTCOME or "（指定なし）"} / {TASK or "（指定なし）"}')
-            print(f'◇ SURVIVAL_DATES = {SURVIVAL_DATES or "（指定なし）"}')
-            print('')
-            print('★ここで選ばなくても先へ進める。★ 演習①は群分け無しで走り、'
-                  'Table 1 だけが作られる。')
+        if need_g:
+            GROUP = '' if (skip or w_g.value == _NONE) else w_g.value
+        if need_o:
+            OUTCOME = None if (skip or w_o.value == _NONE) else w_o.value
+            TASK = None if (skip or w_t.value == _NONE) else w_t.value
+        if need_s:
+            trio = (w_s1.value, w_s2.value, w_s3.value)
+            SURVIVAL_DATES = () if (skip or _NONE in trio) else trio
+        if quiet:
+            _show()
+            return
+        with out2:
+            clear_output()
+            _show()
+
+    def _show():
+        print(f'◇ GROUP          = {GROUP or "（指定なし）"}'
+              '   ← 指定があれば Table 2（群間比較）を作る')
+        print(f'◇ OUTCOME / TASK = {OUTCOME or "（指定なし）"} / {TASK or "（指定なし）"}')
+        print(f'◇ SURVIVAL_DATES = {SURVIVAL_DATES or "（指定なし）"}')
+        print('')
+        print('★選んだ時点で反映される。このセルを実行し直す必要はない。★')
+        print('   次は「◆ 2. 演習① まず全自動で走らせる」のセルを実行すること。')
+        print('   選ばなくても先へ進める（群分け無しで走り、Table 1 だけが作られる）。')
 
     if need_g:
         box.append(w_g)
@@ -387,13 +399,17 @@ def _ask_settings(d, auto=False):
         # 自動実行（LOCAL_DATA_PATH を書いたとき・D&Dアプリ）は待たずに当てはめる
         _apply(quiet=True)
         return
-    b_ok = widgets.Button(description='この指定で進む', button_style='primary',
-                          icon='check', layout=widgets.Layout(width='200px', height='38px'))
-    b_no = widgets.Button(description='指定しない（skip）', icon='forward',
-                          layout=widgets.Layout(width='200px', height='38px'))
-    b_ok.on_click(_apply)
+
+    for w in (w_g, w_o, w_t, w_s1, w_s2, w_s3):
+        w.observe(_apply, names='value')
+    b_no = widgets.Button(description='すべて指定しない（skip）', icon='forward',
+                          layout=widgets.Layout(width='240px', height='38px'))
     b_no.on_click(lambda _: _apply(skip=True))
-    display(widgets.VBox(box), widgets.HBox([b_ok, b_no]), out2)
+
+    # ★1 つの箱にまとめて display する。★ Colab では display() に複数の
+    #   ウィジェットを並べて渡すと、2 つめ以降が出ないことがある。
+    display(widgets.VBox([*box, b_no, out2]))
+    _apply()          # 初期値（推定した列）をその場で反映する
 
 
 def _load(path):
@@ -1292,7 +1308,7 @@ nb = {
     "nbformat": 4,
     "nbformat_minor": 0,
 }
-VERSION = "Ver1_8_2"
+VERSION = "Ver1_8_3"
 out = str(pathlib.Path(__file__).resolve().parent / f"Preprocessing_{VERSION}.ipynb")
 with open(out, "w", encoding="utf-8") as f:
     json.dump(nb, f, ensure_ascii=False, indent=1)
