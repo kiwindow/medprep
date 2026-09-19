@@ -745,6 +745,26 @@ def _save_data(res: PrepResult, p, put) -> None:
             return None
         return res.df_clean.loc[x.index, cols]
 
+    def _missing_map_for(x):
+        """**欠損値がどこにあったか**を 0/1 で残す（補完する前の位置）。
+
+        欠測そのものが情報を持つことはある（測っていない＝安定していた、
+        測れなかった＝重症）。しかし多くは単なる入力漏れで、意味を持たない。
+        **どちらなのかは、位置を見ないと人には判断できない。**
+
+        1 = その症例のその項目は空欄だった（このあと中央値などで埋めた）
+        0 = 実測値がそのまま入っている
+
+        最後の列 `欠損数` は、その症例に空欄がいくつあったかである。
+        ここが大きい行は、**症例そのものを疑う**手がかりになる。
+        """
+        raw = _raw_for(x)
+        if raw is None:
+            return None
+        flag = raw.isna().astype(int)
+        flag["欠損数"] = flag.sum(axis=1)
+        return flag
+
     def _prepared_book(x, y):
         def _write(q):
             std = _date_only(_with_meta(x, y))
@@ -753,9 +773,14 @@ def _save_data(res: PrepResult, p, put) -> None:
                 _fmt_sheet(w.sheets["標準化後"], std)
                 raw = _raw_for(x)
                 if raw is not None:
-                    raw = _date_only(_with_meta(raw, y))
-                    raw.to_excel(w, sheet_name="生の値", index=False)
-                    _fmt_sheet(w.sheets["生の値"], raw)
+                    book = _date_only(_with_meta(raw, y))
+                    book.to_excel(w, sheet_name="生の値", index=False)
+                    _fmt_sheet(w.sheets["生の値"], book)
+                miss = _missing_map_for(x)
+                if miss is not None:
+                    miss = _with_meta(miss, None)
+                    miss.to_excel(w, sheet_name="欠損値の位置", index=False)
+                    _fmt_sheet(w.sheets["欠損値の位置"], miss)
         return _write
 
     put(os.path.join(d, "前処理済み_train.xlsx"), _prepared_book(res.X_train, res.y_train))

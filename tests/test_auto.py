@@ -611,7 +611,7 @@ def test_the_prepared_matrix_also_keeps_the_raw_values_on_a_second_sheet(tmp_pat
         save=True, out_dir=str(tmp_path), method="T")
     book = tmp_path / "T" / "run1" / "data" / "前処理済み_train.xlsx"
     assert book.exists()
-    assert load_workbook(book).sheetnames == ["標準化後", "生の値"]
+    assert load_workbook(book).sheetnames == ["標準化後", "生の値", "欠損値の位置"]
 
     raw = pd.read_excel(book, sheet_name="生の値")
     std = pd.read_excel(book, sheet_name="標準化後")

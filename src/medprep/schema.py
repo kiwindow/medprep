@@ -357,7 +357,15 @@ class Schema:
     notes: list = field(default_factory=list)
 
     DEFAULT_POLICY = {
-        "missing": {"numeric": "median", "categorical": "most_frequent", "add_indicator": True},
+        # ★欠損指示子は既定では作らない。★
+        #   欠測そのものが情報を持つことはあるが、多くは単なる入力漏れで
+        #   意味を持たない。欠測率 0.5% の列の指示子はほぼ定数で、
+        #   正則化モデルを不安定にするだけである。
+        #   **欠測がどこにあったかは `前処理済み_*.xlsx` の
+        #   「欠損値の位置」シートに 0/1 で残るので、情報は失われない。**
+        #   特徴量として使いたいときは policy で明示的に True にする。
+        "missing": {"numeric": "median", "categorical": "most_frequent",
+                    "add_indicator": False},
         "outlier": {"method": "iqr", "fold": 1.5, "action": "winsorize"},
         "encode": {"nominal": "onehot", "min_frequency": 0.01, "ordinal": "ordinal"},
         "scale": {"method": "standard"},

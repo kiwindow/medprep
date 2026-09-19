@@ -535,7 +535,8 @@ def _check_missing(df, schema, group, findings, high=0.5, mid=0.2):
             findings.append(Finding(
                 INFO, "欠測", f"'{c}' の欠測率が {m:.1%}", columns=[c],
                 n=int(df[c].isna().sum()),
-                action="補完すること自体は妥当だが、欠測指示子（add_indicator）を残すこと"))
+                action="補完すること自体は妥当だが、欠測がどこにあったかを必ず残すこと"
+                       "（前処理済み_*.xlsx の「欠損値の位置」シート）"))
 
     rowmiss = df.isna().mean(axis=1)
     bad = rowmiss >= high

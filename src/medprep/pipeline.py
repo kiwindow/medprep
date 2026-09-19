@@ -311,14 +311,14 @@ def _numeric_pipe(pol: dict, bounds: dict | None):
         from sklearn.experimental import enable_iterative_imputer  # noqa: F401
         from sklearn.impute import IterativeImputer
         imp = IterativeImputer(random_state=mis.get("random_state", 0),
-                               add_indicator=mis.get("add_indicator", True))
+                               add_indicator=mis.get("add_indicator", False))
     elif strategy == "knn":
         from sklearn.impute import KNNImputer
         imp = KNNImputer(n_neighbors=mis.get("n_neighbors", 5),
-                         add_indicator=mis.get("add_indicator", True))
+                         add_indicator=mis.get("add_indicator", False))
     else:
         imp = SimpleImputer(strategy=strategy,
-                            add_indicator=mis.get("add_indicator", True))
+                            add_indicator=mis.get("add_indicator", False))
     steps.append(("imp", imp))
 
     # 3) 分布変換（任意）

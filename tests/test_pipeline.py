@@ -44,11 +44,11 @@ def schema_of(df):
                         outcome="転帰", task="classification")
 
 
-def prepared(df=None, **kw):
+def prepared(df=None, policy=None, **kw):
     df = frame() if df is None else df
     sch = schema_of(df)
     sp = split(df, sch, test_size=0.25, seed=0)
-    return sp, prepare(sp, sch, **kw)
+    return sp, prepare(sp, sch, policy, **kw)
 
 
 # ---------------------------------------------------------------- 見張り 1
@@ -183,8 +183,21 @@ def test_output_keeps_readable_column_names():
     assert list(p.X_train.columns) == list(p.X_test.columns)
 
 
-def test_missing_indicators_are_named_in_japanese():
+def test_missing_indicators_are_not_features_by_default():
+    """★欠損指示子は既定では特徴量にしない。★
+
+    『測っていない』こと自体が情報であることはあるが、多くは単なる入力漏れである。
+    欠測率 0.5% の列の指示子はほぼ定数で、正則化モデルを不安定にするだけ。
+    欠測の位置は書き出しの「欠損値の位置」シートに 0/1 で残るので情報は消えない。
+    """
     _sp, p = prepared()
+    assert not [c for c in p.X_train.columns if c.startswith("欠損あり_")]
+    assert not [c for c in p.X_train.columns if c.startswith("missingindicator_")]
+
+
+def test_missing_indicators_are_named_in_japanese_when_switched_on():
+    """明示的に有効にしたときは、読める名前で出る。"""
+    _sp, p = prepared(None, {"missing": {"add_indicator": True}})
     assert "欠損あり_Alb" in p.X_train.columns
     assert not any(c.startswith("missingindicator_") for c in p.X_train.columns)
 
