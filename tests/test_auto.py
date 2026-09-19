@@ -707,3 +707,25 @@ def test_the_cases_flagged_for_exclusion_are_listed_in_their_own_sheet(tmp_path)
     # 解析用データに残っていない＝本当に消えている
     assert not (got & set(map(str, rep.df_use.columns)))
     assert set(map(str, mp.removed_columns(rep)["列"])) == got
+
+    # --- 長い文の列は**横に広げずに折り返す**（幅で解決すると隣の列が見えなくなる）
+    from medprep.auto import WRAP_WIDTH, _cell_width
+    wb = load_workbook(book)
+    ws = wb["まとめ"]
+    long_ones = 0
+    for j, c in enumerate(rep.removed.columns, start=1):
+        body = rep.removed[c].dropna().astype(str)
+        wide = len(body) and int(body.map(_cell_width).max()) > WRAP_WIDTH
+        got_wrap = bool(ws.cell(2, j).alignment.wrap_text)
+        assert got_wrap == bool(wide), f"{c}: 折返し {got_wrap} / 幅 {wide}"
+        assert ws.column_dimensions[ws.cell(1, j).column_letter].width <= 70
+        long_ones += bool(wide)
+    assert long_ones                       # 折り返す列が 1 本も無ければ試していない
+    # ★行の高さは指定しない。★ 指定しないほうが Excel が中身に合わせる
+    assert all(d.height is None for d in ws.row_dimensions.values())
+
+    # ★症例レベルのデータには折返しを掛けない。★
+    #   自由記載が 1 行あるだけで全行が高くなり、値を追えなくなる
+    dat = load_workbook(tmp_path / "T" / "run1" / "data" / "掃除済みデータ.xlsx")["データ"]
+    assert not any(dat.cell(2, j).alignment.wrap_text
+                   for j in range(1, dat.max_column + 1))

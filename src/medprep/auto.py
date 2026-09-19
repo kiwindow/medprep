@@ -576,7 +576,7 @@ def _write_all(res: PrepResult, *, step, t0, save_data=True) -> None:
         put(p.file("table", "除外の記録.xlsx"), _removed_book(res))
     if res.outputs is not None:
         put(p.file("table", "書き出したデータの説明.xlsx"),
-            lambda q: _excel(res.outputs, q))
+            lambda q: _excel(res.outputs, q, wrap=True))
 
     # --- data/ ： ★症例レベルのデータ★
     if save_data:
@@ -655,14 +655,27 @@ def _cell_width(s: str) -> int:
     return sum(2 if unicodedata.east_asian_width(ch) in "WFA" else 1 for ch in str(s))
 
 
-def _fmt_sheet(ws, df) -> None:
+#: 折返しを始める幅。これを超える文の列は、広げるのではなく**折り返す**。
+WRAP_WIDTH = 40
+
+
+def _fmt_sheet(ws, df, *, wrap: bool = False) -> None:
     """列ごとに表示書式と幅を決める。**既定のままだと小数が消えて見える。**
 
     ★幅は見出しではなく中身で決める。★ 見出しだけで決めると、
     「理由」のような**短い見出しに長い文が入る列**が必ず切れる。
     隣のセルが空でなければ Excel は文字をはみ出させないので、
     切れた文字は**画面から消える**。理由が読めない一覧に値打ちはない。
+
+    `wrap=True` のときは、長い文の列を**横に広げずに折り返す。**
+    幅で解決しようとすると 1 列で画面が埋まり、隣の列が見えなくなる。
+    行の高さは指定しない ―― **指定しないほうが Excel が中身に合わせる。**
+
+    ★折返しは説明の表だけに掛ける。★ 症例レベルのデータで掛けると、
+    自由記載が 1 行あるだけで 600 行すべてが高くなり、値を追えなくなる。
     """
+    from openpyxl.styles import Alignment
+
     for j, c in enumerate(df.columns, start=1):
         col = df[c]
         need = _cell_width(c)
@@ -678,17 +691,31 @@ def _fmt_sheet(ws, df) -> None:
             body = col.dropna()
             if len(body):
                 need = max(need, int(body.astype(str).map(_cell_width).max()))
-        # 上限を置くのは、自由記載の 1 行で画面が埋まるのを防ぐため。
-        ws.column_dimensions[ws.cell(1, j).column_letter].width = (
-            min(70, max(10, need + 2)))
+
+        if wrap and not numeric and need > WRAP_WIDTH:
+            # 折り返す列。★上下は中央、左右は左詰め。★
+            #   折り返した文を中央揃えにすると、行ごとに文頭がずれて読めない。
+            ws.column_dimensions[ws.cell(1, j).column_letter].width = WRAP_WIDTH
+            for i in range(2, len(df) + 2):
+                ws.cell(i, j).alignment = Alignment(
+                    wrap_text=True, vertical="center", horizontal="left")
+        else:
+            # 上限を置くのは、自由記載の 1 行で画面が埋まるのを防ぐため。
+            ws.column_dimensions[ws.cell(1, j).column_letter].width = (
+                min(70, max(10, need + 2)))
+            if wrap:
+                for i in range(2, len(df) + 2):
+                    ws.cell(i, j).alignment = Alignment(vertical="center")
+        ws.cell(1, j).alignment = Alignment(
+            horizontal="center", vertical="center", wrap_text=True)
 
 
-def _excel(df, path, sheet_name="Sheet1") -> None:
+def _excel(df, path, sheet_name="Sheet1", *, wrap: bool = False) -> None:
     """Excel に書く。★日付は年月日だけ、数値は小数が見える書式にする。★"""
     out = _date_only(df)
     with pd.ExcelWriter(path, engine="openpyxl") as w:
         out.to_excel(w, sheet_name=sheet_name, index=False)
-        _fmt_sheet(w.sheets[sheet_name], out)
+        _fmt_sheet(w.sheets[sheet_name], out, wrap=wrap)
 
 
 def _save_data(res: PrepResult, p, put) -> None:
@@ -721,9 +748,12 @@ def _save_data(res: PrepResult, p, put) -> None:
                 book.to_excel(w, sheet_name="データ", index=False)
                 _fmt_sheet(w.sheets["データ"], book)
                 if res.schema is not None:
-                    res.schema.to_frame().to_excel(w, sheet_name="列の扱い", index=False)
+                    spec = res.schema.to_frame()
+                    spec.to_excel(w, sheet_name="列の扱い", index=False)
+                    _fmt_sheet(w.sheets["列の扱い"], spec, wrap=True)
                 if res.removed is not None and len(res.removed):
                     res.removed.to_excel(w, sheet_name="減らしたもの", index=False)
+                    _fmt_sheet(w.sheets["減らしたもの"], res.removed, wrap=True)
         put(os.path.join(d, "掃除済みデータ.xlsx"), _clean_book)
 
         if res.df_use is not None:
@@ -981,12 +1011,12 @@ def _removed_book(res: PrepResult):
         cols = removed_columns(res)
         with pd.ExcelWriter(q, engine="openpyxl") as w:
             res.removed.to_excel(w, sheet_name="まとめ", index=False)
-            _fmt_sheet(w.sheets["まとめ"], res.removed)
+            _fmt_sheet(w.sheets["まとめ"], res.removed, wrap=True)
             book = _date_only(cases)
             book.to_excel(w, sheet_name="外すのが望ましい症例", index=False)
-            _fmt_sheet(w.sheets["外すのが望ましい症例"], book)
+            _fmt_sheet(w.sheets["外すのが望ましい症例"], book, wrap=True)
             cols.to_excel(w, sheet_name="解析から外す列", index=False)
-            _fmt_sheet(w.sheets["解析から外す列"], cols)
+            _fmt_sheet(w.sheets["解析から外す列"], cols, wrap=True)
     return _write
 
 
