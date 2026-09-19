@@ -247,7 +247,7 @@ _TIME_RE = re.compile(r"^\s*(\d{1,2})\s*[:：時]\s*(\d{1,2})\s*分?\s*$")
 #: 派生指標の列名。★単位を列名に書く。★ 単位の無い数値は必ずどこかで誤読される。
 UF_COL, URR_COL, TD_COL = "除水量(kg)", "URR(%)", "透析時間(hr)"
 KTV_COL, TSAT_COL, ICA_COL = "spKt/V", "TSAT(%)", "iCa(mg/dL)"
-ICAP_COL = "iCa×P"
+ICAP_COL, VINTAGE_COL = "iCa×P", "透析年数"
 
 
 def to_hours(v) -> float:
@@ -319,6 +319,56 @@ def _time_col(df, *words):
         if all(w in nc for w in words):
             return c
     return None
+
+
+def _date_like(df, *words, exclude=("時刻",)):
+    for c in df.columns:
+        nc = _norm(c)
+        if all(w in nc for w in words) and not any(x in nc for x in exclude):
+            return c
+    return None
+
+
+def derive_vintage(df: pd.DataFrame, *, start_col: str | None = None,
+                   end_col: str | None = None) -> tuple[pd.DataFrame, list]:
+    """透析開始年月日から **透析年数（切り捨て）** を作る。
+
+    ★日付を解釈したあとに呼ぶこと。★ 文字列のままでは引き算ができない。
+
+    終了日は「その検査を計算している日」である。検体採取日があればそれを使い、
+    無ければ観察開始年月日で代用する（**どちらを使ったかは必ず注記に出す**）。
+    どちらも無ければ作らない。**今日の日付では代用しない** ――
+    走らせた日によって値が変わる列を、黙って混ぜてはならない。
+
+    0 年は「導入後 1 年未満」を意味する。導入日が不明な症例は NaN。
+    """
+    from .dates import parse_date_series
+
+    out, notes = df.copy(), []
+    if VINTAGE_COL in out.columns:
+        return out, notes
+    sc = start_col or _date_like(out, "透析開始") or _date_like(out, "導入", "日")
+    ec = end_col or _date_like(out, "検体採取") or _date_like(out, "採血", "日") \
+        or _date_like(out, "測定", "日") or _date_like(out, "観察開始")
+    if not sc or not ec or sc == ec:
+        return out, notes
+
+    def _dt(col):
+        v = out[col]
+        if pd.api.types.is_datetime64_any_dtype(v):
+            return v
+        return parse_date_series(v).values
+
+    a, b = _dt(sc), _dt(ec)
+    years = (b - a).dt.days / 365.25
+    out[VINTAGE_COL] = np.floor(years).where(years.notna() & (years >= 0))
+    n_unknown = int(out[VINTAGE_COL].isna().sum())
+    n_neg = int((years < 0).sum())
+    notes.append(
+        f"{VINTAGE_COL} を '{sc}' から '{ec}' までの年数（★切り捨て★）として算出した"
+        + (f"。算出できない症例が {n_unknown} 例（導入日が空欄・解釈不能）" if n_unknown else "")
+        + (f"。開始日が終了日より後の症例が {n_neg} 例あり NaN にした" if n_neg else ""))
+    return out, notes
 
 
 def derive_dialysis(df: pd.DataFrame, dic: dict | None = None) -> tuple[pd.DataFrame, list]:

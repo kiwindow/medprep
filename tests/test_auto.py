@@ -585,13 +585,49 @@ def test_small_numbers_keep_their_decimals_in_excel(tmp_path):
 
     from medprep.auto import _decimals, _excel
 
-    assert _decimals([0.01, 0.05, 2.96, 12.97]) == 3
+    assert _decimals([0.01, 0.05, 2.96, 12.97]) == 2      # ★最低 2 桁★
     assert _decimals([65, 70, 80]) == 0
-    assert _decimals([2.1, 3.6, 4.8]) == 1
+    assert _decimals([2.1, 3.6, 4.8]) == 2
+    assert _decimals([0.0027, 1.41, 9.2]) == 3            # 0.00 に丸めない
 
     d = pd.DataFrame({"CRP": [0.01, 0.05, 2.96], "年齢": [65, 70, 80]})
     path = tmp_path / "t.xlsx"
     _excel(d, path)
     ws = load_workbook(path).active
-    assert ws.cell(2, 1).number_format == "0.000"
+    assert ws.cell(2, 1).number_format == "0.00"
     assert ws.cell(2, 2).number_format == "0"
+
+
+def test_the_prepared_matrix_also_keeps_the_raw_values_on_a_second_sheet(tmp_path):
+    """★標準化後の表は人が読んでも意味が取れない。★
+
+    施設は `施設=B院` のダミーになり、数値は z 値になる。群間比較をしたり
+    値を目で確かめたりできるよう、同じ症例・同じ列を**生の値**でも残す。
+    """
+    from openpyxl import load_workbook
+
+    df = _survival_frame()
+    run(df, outcome="転帰", task="classification",
+        save=True, out_dir=str(tmp_path), method="T")
+    book = tmp_path / "T" / "run1" / "data" / "前処理済み_train.xlsx"
+    assert book.exists()
+    assert load_workbook(book).sheetnames == ["標準化後", "生の値"]
+
+    raw = pd.read_excel(book, sheet_name="生の値")
+    std = pd.read_excel(book, sheet_name="標準化後")
+    assert len(raw) == len(std)
+    assert "施設" in raw.columns                      # 名義尺度のまま
+    assert set(raw["施設"].dropna()) <= {"A院", "B院"}
+    assert not [c for c in raw.columns if c.startswith("施設=")]
+    assert [c for c in std.columns if c.startswith("施設=")]   # こちらはダミー
+
+
+def test_the_untouched_original_is_saved_too(tmp_path):
+    """★掃除の前と後を突き合わせられないと、機械が直したのか分からなくなる。★"""
+    df = _survival_frame()
+    rep = run(df, outcome="転帰", task="classification",
+              save=True, out_dir=str(tmp_path), method="T")
+    raw = pd.read_excel(tmp_path / "T" / "run1" / "data" / "元データ.xlsx")
+    assert len(raw) == len(df)
+    assert list(raw.columns) == list(df.columns)
+    assert any("元データ" in f for f in rep.saved)

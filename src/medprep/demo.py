@@ -173,6 +173,7 @@ def dialysis_cohort(n: int = 600, seed: int = 20260918) -> pd.DataFrame:
 
     styles_s = rng.choice(8, n, p=_DATE_STYLE_P)
     styles_e = rng.choice(8, n, p=_DATE_STYLE_P)
+    styles_h = rng.choice(8, n, p=_DATE_STYLE_P)
 
     df = pd.DataFrame({
         "仮名ID": [f"P{i:04d}" for i in range(1, n + 1)],
@@ -180,7 +181,6 @@ def dialysis_cohort(n: int = 600, seed: int = 20260918) -> pd.DataFrame:
         "施設コード": pd.Series(fac).map({"A院": 1, "B院": 2, "C院": 3, "D院": 4}),
         "性別": sex,
         "年齢": age,
-        "透析歴_月": vintage,
         "糖尿病": dm,
         "身長": height,
         "透析開始時刻": [_hhmm(x, rng) for x in t_start],
@@ -195,7 +195,7 @@ def dialysis_cohort(n: int = 600, seed: int = 20260918) -> pd.DataFrame:
         "透析後カリウム(K)": k_post,
         "アルブミン(Alb)": alb,
         "末梢血｜血色素量(Hb)": hb,
-        "C反応性蛋白(CRP)定量": crp,
+        "CRP定量": crp,
         "無機リン(P)": p_,
         "カルシウム(Ca)": ca,
         "インタクトPTH(iPTH)": ipth,
@@ -212,6 +212,12 @@ def dialysis_cohort(n: int = 600, seed: int = 20260918) -> pd.DataFrame:
                for i in range(n)],
     })
 
+    # ★透析歴そのものは渡さない。透析開始年月日から作らせる。★
+    #   実務のデータは導入日が入っていて、年数は入っていないことが多い。
+    #   検体採取日から遡った日を導入日とする（= そのときの透析歴が vintage 月）。
+    hd_start = draw - pd.to_timedelta((vintage * 30.44).round(0), "D")
+
+    df["透析開始年月日"] = [_fmt(t, s_, rng) for t, s_ in zip(hd_start, styles_h)]
     df["検体採取日"] = [_fmt(t, 0, rng) for t in draw]
     df["観察開始年月日"] = [_fmt(t, s, rng) for t, s in zip(start, styles_s)]
     df["event発生年月日"] = [_fmt(t, s, rng) if e else ""
@@ -239,10 +245,10 @@ def _inject_dirt(df: pd.DataFrame, end, rng, n: int) -> None:
 
     # 文字列の汚れを入れる列は、あらかじめ object にしておく
     #（float の列に文字列を代入すると pandas 3 でエラーになる）
-    for c in ["C反応性蛋白(CRP)定量", "β2マイクログロブリン(β2MG)"]:
+    for c in ["CRP定量", "β2マイクログロブリン(β2MG)"]:
         df[c] = df[c].astype(object)
 
-    df.loc[cut(22, 60), "C反応性蛋白(CRP)定量"] = "<0.1"                           # 検出限界
+    df.loc[cut(22, 60), "CRP定量"] = "<0.1"                           # 検出限界
     df.loc[cut(60, 95), "インタクトPTH(iPTH)"] = 999                              # 欠損コード
     df.loc[cut(95, 120), "β2マイクログロブリン(β2MG)"] = "未測定"
     df.loc[cut(120, 135), "末梢血｜血色素量(Hb)"] = (                              # g/L 単位混在
@@ -250,7 +256,7 @@ def _inject_dirt(df: pd.DataFrame, end, rng, n: int) -> None:
     df.loc[cut(135, 138), "末梢血｜血色素量(Hb)"] = 0                              # あり得ない値
     df.loc[cut(138, 141), "年齢"] = 250                                          # あり得ない値
     df.loc[cut(141, 190), "アルブミン(Alb)"] = np.nan                             # 通常の欠損
-    df.loc[cut(190, 205), "透析歴_月"] = np.nan
+    df.loc[cut(190, 205), "透析開始年月日"] = ""      # 導入日が不明な症例
 
     # ★透析前後の取り違え（C院の検体だけ列の順序が逆）★
     #   施設ごとにエクスポートの仕様が違い、1 施設だけ前後が入れ替わっていた——

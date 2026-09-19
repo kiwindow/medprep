@@ -66,6 +66,8 @@ COLUMN_EN: dict[str, str] = {
     "施設": "Facility", "施設コード": "Facility code",
     "性別": "Sex", "男性": "Male sex", "女性": "Female sex",
     "年齢": "Age", "透析歴_月": "Dialysis vintage",
+    "透析年数": "Dialysis vintage", "透析開始年月日": "Dialysis start date",
+    "CRP定量": "C-reactive protein",
     "糖尿病": "Diabetes mellitus", "備考": "Remarks",
     "身長": "Height", "体重": "Body weight",
     "透析開始時刻": "Dialysis start time", "透析終了時刻": "Dialysis end time",

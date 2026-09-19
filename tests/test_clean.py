@@ -173,3 +173,29 @@ def test_nothing_is_created_when_the_inputs_are_not_paired():
     for c in ("URR(%)", "spKt/V", "TSAT(%)"):
         assert c not in out.columns
     assert "除水量(kg)" in out.columns        # 体重の組は揃っているので作る
+
+
+def test_dialysis_vintage_in_years_is_floored():
+    """★透析年数は切り捨て。★ 0 年は「導入後 1 年未満」を意味する。"""
+    from medprep.clean import derive_vintage
+
+    df = pd.DataFrame({
+        "透析開始年月日": ["2015-04-01", "2015-04-01", "", "2020-01-01"],
+        "検体採取日": ["2020-03-31", "2020-04-02", "2020-01-01", "2019-01-01"],
+    })
+    out, notes = derive_vintage(df)
+    assert float(out["透析年数"].iloc[0]) == 4.0          # 4 年 364 日 → 4
+    assert float(out["透析年数"].iloc[1]) == 5.0          # 5 年 1 日 → 5
+    assert pd.isna(out["透析年数"].iloc[2])               # 導入日が空欄 → 算出不能
+    assert pd.isna(out["透析年数"].iloc[3])               # 開始 > 終了 → NaN
+    assert any("切り捨て" in n for n in notes)
+
+
+def test_vintage_is_not_invented_from_todays_date():
+    """★終了日が無ければ作らない。★ 走らせた日で値が変わる列を混ぜてはならない。"""
+    from medprep.clean import derive_vintage
+
+    df = pd.DataFrame({"透析開始年月日": ["2015-04-01", "2016-01-01"]})
+    out, notes = derive_vintage(df)
+    assert "透析年数" not in out.columns
+    assert notes == []

@@ -107,7 +107,7 @@ def test_missing_codes_are_present():
 
 def test_the_limit_of_detection_notation_is_present():
     df = demo.dialysis_cohort()
-    assert (df["C反応性蛋白(CRP)定量"].astype(str) == "<0.1").sum() > 0
+    assert (df["CRP定量"].astype(str) == "<0.1").sum() > 0
 
 
 def test_physiologically_impossible_values_are_present():
@@ -170,7 +170,8 @@ def test_the_alp_method_change_makes_a_real_step():
 def test_ordinary_missing_values_are_present():
     df = demo.dialysis_cohort()
     assert df["アルブミン(Alb)"].isna().sum() > 0
-    assert df["透析歴_月"].isna().sum() > 0
+    # 透析開始年月日は「空欄」の汚れ（NaN ではなく空文字）で入れてある
+    assert (df["透析開始年月日"].astype(str).str.strip() == "").sum() > 0
 
 
 # ---------------------------------------------------------------- 真値

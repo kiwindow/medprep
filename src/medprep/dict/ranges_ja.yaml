@@ -87,7 +87,7 @@ items:
 
   vintage:
     name_ja: 透析歴
-    aliases: [透析歴, 透析歴_月, 透析期間, vintage, "透析歴(月)", "透析歴(年)", 導入後期間]
+    aliases: [透析歴, 透析歴_月, 透析期間, vintage, "透析歴(月)", 導入後期間]
     unit: 月
     unit_variants: {年: 12}
     plausible: [0, 700]
@@ -149,6 +149,16 @@ items:
     note: |
       (透析前BUN − 透析後BUN) / 透析前BUN × 100。
       負値は透析後のほうが高いことを意味し、生理学的にあり得ない。前後が逆である。
+
+  vintage_y:
+    name_ja: 透析年数
+    aliases: [透析年数, 透析歴_年, "透析歴(年)", "透析歴（年）", HD vintage years, 透析導入後年数]
+    unit: 年
+    plausible: [0, 60]
+    note: |
+      透析開始年月日から、その検査の日までの年数（★切り捨て★）。
+      月単位の `vintage`（透析歴）と同じものを年で表したもので、両方は持たない。
+      導入日が不明な症例は算出不能（NaN）。0 年は「導入後 1 年未満」を意味する。
 
   interdialytic_days:
     name_ja: 透析間隔日数
@@ -710,7 +720,7 @@ items:
 
   CRP:
     name_ja: C反応性蛋白
-    aliases: ["C反応性蛋白(CRP)定量", CRP, C反応性蛋白, CRP定量, hsCRP]
+    aliases: ["C反応性蛋白(CRP)定量", CRP定量, CRP, C反応性蛋白, CRP定量, hsCRP]
     unit: mg/dL
     unit_variants: {mg/L: 0.1}
     plausible: [0, 100]

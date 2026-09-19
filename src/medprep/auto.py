@@ -32,7 +32,7 @@ import pandas as pd
 
 from . import paths as _paths
 from . import viz
-from .clean import clean_numeric, derive, load_dict
+from .clean import clean_numeric, derive, derive_vintage, load_dict
 from .dates import parse_date_series
 from .describe import table_one, target_achievement
 from .loading import read_any
@@ -290,6 +290,16 @@ def autoprep(
     #   和暦・全角・Excel シリアル値・時刻付きが 1 列に混ざっていても、
     #   ここで datetime に揃える。**並びが決まらない列には手を触れない。**
     res.dates = _parse_dates(dfc, res.schema_raw, date_col, survival_dates, step, warn)
+
+    # -------------------------------------------------------- 4.6) 日付から作る派生列
+    #   ★日付を解釈したあとでなければ引き算ができない。★ だからここに置く。
+    dfc2, vnotes = derive_vintage(dfc, end_col=date_col)
+    for c in dfc2.columns:
+        if c not in dfc.columns:
+            dfc[c] = dfc2[c]
+    if vnotes:
+        res.notes += vnotes
+        step("日付から透析年数を作る", True, vnotes[0])
 
     # -------------------------------------------------------- 5) 役割の再推定
     #   掃除で派生列（補正Ca など）が増えるので、以降はこちらの schema を使う。
@@ -614,8 +624,10 @@ def _decimals(v) -> int:
     if nz.empty:
         return 1
     import math
-    need = math.ceil(-math.log10(float(nz.min()))) + 1
-    return int(min(4, max(1, need)))
+    # ★いちばん小さい非ゼロの値が 0 に丸められない桁数。★ 下限は 2 桁。
+    #   CRP は最小 0.01 なので 2 桁（0.01）、duration は 0.003 なので 3 桁になる。
+    need = math.ceil(-math.log10(float(nz.min())))
+    return int(min(4, max(2, need)))
 
 
 def _fmt_sheet(ws, df) -> None:
@@ -659,6 +671,11 @@ def _save_data(res: PrepResult, p, put) -> None:
     d = os.path.join(p.run, "data")
     os.makedirs(d, exist_ok=True)
 
+    # ★前処理前の元データも残す。★ 掃除の前と後を突き合わせられないと、
+    #   「この値はもともとこうだったのか、機械が直したのか」が分からなくなる。
+    if res.df_raw is not None:
+        put(os.path.join(d, "元データ.xlsx"), lambda q: _excel(res.df_raw, q))
+
     if res.df_clean is not None:
         def _clean_book(q):
             with pd.ExcelWriter(q, engine="openpyxl") as w:
@@ -699,10 +716,38 @@ def _save_data(res: PrepResult, p, put) -> None:
             out[name] = y.to_numpy()
         return out
 
-    put(os.path.join(d, "前処理済み_train.xlsx"),
-        lambda q: _excel(_with_meta(res.X_train, res.y_train), q))
-    put(os.path.join(d, "前処理済み_test.xlsx"),
-        lambda q: _excel(_with_meta(res.X_test, res.y_test), q))
+    def _raw_for(x):
+        """同じ症例・同じ列を、**標準化前の値**で並べる。
+
+        sheet1（標準化後）は計算のためのもので、人が読んでも意味が取れない。
+        施設は `施設=B院` のダミーになり、透析時間は z 値になる。
+        **群間比較をしたり、値を目で確かめたりできるように、生の値も残す。**
+        """
+        cols = []
+        try:
+            cols = [c for c in res.prepared.preprocessor.input_columns()
+                    if res.df_clean is not None and c in res.df_clean.columns]
+        except Exception:                                            # noqa: BLE001
+            cols = []
+        if not cols or res.df_clean is None:
+            return None
+        return res.df_clean.loc[x.index, cols]
+
+    def _prepared_book(x, y):
+        def _write(q):
+            std = _date_only(_with_meta(x, y))
+            with pd.ExcelWriter(q, engine="openpyxl") as w:
+                std.to_excel(w, sheet_name="標準化後", index=False)
+                _fmt_sheet(w.sheets["標準化後"], std)
+                raw = _raw_for(x)
+                if raw is not None:
+                    raw = _date_only(_with_meta(raw, y))
+                    raw.to_excel(w, sheet_name="生の値", index=False)
+                    _fmt_sheet(w.sheets["生の値"], raw)
+        return _write
+
+    put(os.path.join(d, "前処理済み_train.xlsx"), _prepared_book(res.X_train, res.y_train))
+    put(os.path.join(d, "前処理済み_test.xlsx"), _prepared_book(res.X_test, res.y_test))
 
 
 def _parse_dates(dfc, schema_raw, date_col, survival_dates, step, warn) -> dict:
