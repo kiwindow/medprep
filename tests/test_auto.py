@@ -680,7 +680,8 @@ def test_the_cases_flagged_for_exclusion_are_listed_in_their_own_sheet(tmp_path)
     assert len(rep.df_clean) == len(df)            # ★行は削除しない★
 
     book = tmp_path / "T" / "run1" / "table" / "除外の記録.xlsx"
-    assert load_workbook(book).sheetnames == ["まとめ", "外すのが望ましい症例"]
+    assert load_workbook(book).sheetnames == [
+        "まとめ", "外すのが望ましい症例", "解析から外す列"]
     cases = pd.read_excel(book, sheet_name="外すのが望ましい症例")
     assert len(cases) == rep.n_excluded
     assert {"元の行", "仮名ID", "理由"} <= set(cases.columns)
@@ -689,3 +690,20 @@ def test_the_cases_flagged_for_exclusion_are_listed_in_their_own_sheet(tmp_path)
 
     # 同じものが API からも取れる
     assert len(mp.excluded_cases(rep)) == rep.n_excluded
+
+    # --- 3 枚目：★本当に消える列だけ★
+    cols = pd.read_excel(book, sheet_name="解析から外す列")
+    assert list(cols.columns) == ["列", "理由", "段"]
+    got = set(cols["列"].astype(str))
+    rem = rep.removed
+    want = set(rem.loc[(rem["種類"] == "列")
+                       & (rem["処置"] == "解析から外した（列を削除）"), "対象"].astype(str))
+    assert got == want and got
+    # 残る列は入れない。ここを混ぜると「消えた」と言われた列が手元にあって人が混乱する
+    stay = set(rem.loc[(rem["種類"] == "列")
+                       & (rem["処置"] == "特徴量にしなかった（列は残る）"),
+                       "対象"].astype(str))
+    assert not (got & stay)
+    # 解析用データに残っていない＝本当に消えている
+    assert not (got & set(map(str, rep.df_use.columns)))
+    assert set(map(str, mp.removed_columns(rep)["列"])) == got

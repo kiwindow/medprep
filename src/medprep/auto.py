@@ -53,6 +53,11 @@ from .textfmt import frame_text
 EXCLUDE_FLAG = "除外推奨"
 EXCLUDE_REASON = "除外推奨_理由"
 
+# --- 列の扱いを表す言葉。★表に書く文字と、抽出に使う文字を同じにする。★
+#     文字列を二か所に書くと、片方だけ直したときに黙ってずれる。
+COL_DROPPED = "解析から外した（列を削除）"
+COL_UNUSED = "特徴量にしなかった（列は残る）"
+
 
 # ================================================================== 結果
 @dataclass
@@ -641,19 +646,41 @@ def _decimals(v) -> int:
     return int(min(4, max(2, need)))
 
 
+def _cell_width(s: str) -> int:
+    """Excel の桁数でいう見た目の幅。★日本語は 2 桁分を占める。★
+
+    `len()` で測ると日本語の列だけが必ず半分の幅になり、文字が切れる。
+    """
+    import unicodedata
+    return sum(2 if unicodedata.east_asian_width(ch) in "WFA" else 1 for ch in str(s))
+
+
 def _fmt_sheet(ws, df) -> None:
-    """列ごとに表示書式と幅を決める。**既定のままだと小数が消えて見える。**"""
+    """列ごとに表示書式と幅を決める。**既定のままだと小数が消えて見える。**
+
+    ★幅は見出しではなく中身で決める。★ 見出しだけで決めると、
+    「理由」のような**短い見出しに長い文が入る列**が必ず切れる。
+    隣のセルが空でなければ Excel は文字をはみ出させないので、
+    切れた文字は**画面から消える**。理由が読めない一覧に値打ちはない。
+    """
     for j, c in enumerate(df.columns, start=1):
-        head = str(c)
-        width = min(28, max(10, len(head) + 2))
         col = df[c]
-        if pd.api.types.is_numeric_dtype(col) and not pd.api.types.is_bool_dtype(col):
+        need = _cell_width(c)
+        numeric = (pd.api.types.is_numeric_dtype(col)
+                   and not pd.api.types.is_bool_dtype(col))
+        if numeric:
             d = _decimals(col)
             fmt = "0" if d == 0 else "0." + "0" * d
             for i in range(2, len(df) + 2):
                 ws.cell(i, j).number_format = fmt
-            width = max(width, 8 + d)
-        ws.column_dimensions[ws.cell(1, j).column_letter].width = width
+            need = max(need, 8 + d)
+        else:
+            body = col.dropna()
+            if len(body):
+                need = max(need, int(body.astype(str).map(_cell_width).max()))
+        # 上限を置くのは、自由記載の 1 行で画面が埋まるのを防ぐため。
+        ws.column_dimensions[ws.cell(1, j).column_letter].width = (
+            min(70, max(10, need + 2)))
 
 
 def _excel(df, path, sheet_name="Sheet1") -> None:
@@ -921,16 +948,45 @@ def excluded_cases(res: PrepResult) -> pd.DataFrame:
     return out
 
 
+def removed_columns(res: PrepResult) -> pd.DataFrame:
+    """**解析から本当に消える列の一覧。**
+
+    ★「特徴量にしなかった（列は残る）」は入れない。★ 列の扱いには
+    二通りある。**解析用データから消えるもの**と、**解析用データには
+    残るが説明変数には使わないもの**である。後者は日付や生存時間の
+    列で、そのままでは説明変数にならないが、症例を確かめるのに要る。
+
+    この二つを一緒に並べると、「消えた」と言われた列が手元のファイルに
+    あって人が混乱する。ここでは**本当に消える列だけ**を出す。
+
+    なお `掃除済みデータ.xlsx` には**全列がそのまま残る。**
+    あれは人が元の記録と突き合わせるためのものだからである。
+    """
+    cols = ["対象", "理由", "段"]
+    rem = res.removed
+    if rem is None or not len(rem):
+        return pd.DataFrame(columns=cols)
+    hit = rem[(rem["種類"] == "列") & (rem["処置"] == COL_DROPPED)]
+    if not len(hit):
+        return pd.DataFrame(columns=cols)
+    out = hit[cols].reset_index(drop=True)
+    out.insert(0, "列", out.pop("対象"))
+    return out
+
+
 def _removed_book(res: PrepResult):
-    """`除外の記録.xlsx` を書く。**まとめと、症例の一覧の 2 枚組。**"""
+    """`除外の記録.xlsx` を書く。**まとめ・症例・列の 3 枚組。**"""
     def _write(q):
         cases = excluded_cases(res)
+        cols = removed_columns(res)
         with pd.ExcelWriter(q, engine="openpyxl") as w:
             res.removed.to_excel(w, sheet_name="まとめ", index=False)
             _fmt_sheet(w.sheets["まとめ"], res.removed)
             book = _date_only(cases)
             book.to_excel(w, sheet_name="外すのが望ましい症例", index=False)
             _fmt_sheet(w.sheets["外すのが望ましい症例"], book)
+            cols.to_excel(w, sheet_name="解析から外す列", index=False)
+            _fmt_sheet(w.sheets["解析から外す列"], cols)
     return _write
 
 
@@ -1060,7 +1116,7 @@ def _removed_table(res: PrepResult, dfc, outcome) -> pd.DataFrame:
                 continue
             spec = res.schema.columns[c]
             rows.append({"種類": "列", "対象": str(c), "件数": 1,
-                         "処置": "解析から外した（列を削除）",
+                         "処置": COL_DROPPED,
                          "理由": spec.reason, "段": f"列の役割の推定（{spec.role}）"})
 
         # --- 列：残したが前処理に投入しなかったもの（日付・目的変数・生存時間の 2 列）
@@ -1071,7 +1127,7 @@ def _removed_table(res: PrepResult, dfc, outcome) -> pd.DataFrame:
                     continue
                 spec = res.schema.columns[c]
                 rows.append({"種類": "列", "対象": str(c), "件数": 1,
-                             "処置": "特徴量にしなかった（列は残る）",
+                             "処置": COL_UNUSED,
                              "理由": f"役割 {spec.role} は特徴量にしない"
                                    f"（日付・生存時間の列はそのままでは説明変数にならない）",
                              "段": "前処理"})

@@ -80,7 +80,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.10.4"
+__version__ = "0.10.5"
 __author__ = "Kazuhiro Iwadoh"
 __license__ = "MIT"
 
@@ -115,6 +115,7 @@ from .auto import (
     autoprep,
     excluded_cases,
     quicklook,
+    removed_columns,
 )
 from .clean import CleanReport, build_alias_map, clean_numeric, derive, load_dict
 from .dates import DateParseResult, parse_date_frame, parse_date_series
@@ -193,6 +194,7 @@ __all__ = [
     # 層1（全自動 1 行）
     "autoprep", "quicklook", "PrepResult", "EXCLUDE_FLAG", "EXCLUDE_REASON",
     "excluded_cases",
+    "removed_columns",
     # 読み込みと保存先
     "read_any", "new_run", "RunPaths", "RunLog",
     # 表を文字で出す（日本語の幅で桁を揃える）
