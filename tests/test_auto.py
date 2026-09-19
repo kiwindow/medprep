@@ -241,6 +241,58 @@ def test_the_survival_frame_carries_the_covariates():
     assert {"年齢", "施設"} <= cols
 
 
+def _survival_frame(n=200):
+    df = frame(n)
+    base = pd.Timestamp("2015-01-01")
+    df["開始日"] = base + pd.to_timedelta(rng.integers(0, 500, len(df)), "D")
+    df["発生日"] = df["開始日"] + pd.to_timedelta(rng.integers(30, 900, len(df)), "D")
+    df["打切日"] = ""
+    df.loc[df.index[::2], "発生日"] = ""
+    df.loc[df.index[::2], "打切日"] = (
+        df.loc[df.index[::2], "開始日"] + pd.Timedelta(days=700))
+    return df
+
+
+def test_duration_and_event_are_written_into_the_data_not_only_into_the_report():
+    """★3 列の日付を指定したのに、出来上がったデータに観察期間が無いのでは
+    指定した意味がない。★
+
+    `rep.survival.data` の中にしか無いと、Excel を開いた人には見えない。
+    掃除済み・解析用データの両方に `duration` / `event` / `_start` / `_end` を残す。
+    """
+    rep = run(_survival_frame(), survival_dates=("開始日", "発生日", "打切日"))
+    for c in ("duration", "event", "_start", "_end"):
+        assert c in rep.df_clean.columns, c
+        assert c in rep.df_use.columns, c
+    assert any("観察期間とイベント" in n for n, _ok, _d in rep.steps)
+
+    # 値が SurvivalFrame と一致する（結合を取り違えていない）
+    sf = rep.survival.data
+    got = rep.df_clean.loc[sf.index, "duration"]
+    assert (got - sf["duration"]).abs().max() < 1e-9
+
+
+def test_survival_columns_do_not_become_features():
+    """★目的変数そのものが説明変数に紛れ込んではならない。★
+
+    `duration` と `event` を残すのは人が読むためであって、モデルに入れるためではない。
+    """
+    rep = run(_survival_frame(), survival_dates=("開始日", "発生日", "打切日"))
+    feats = rep.schema.features()
+    assert "duration" not in feats and "event" not in feats
+    assert rep.schema.columns["duration"].role == "time"
+    assert rep.schema.columns["event"].role == "event"
+
+
+def test_cases_that_could_not_be_converted_are_nan_not_dropped():
+    """★行は削除しない。★ 生存時間にできなかった症例は NaN にする。"""
+    df = _survival_frame()
+    df.loc[df.index[:10], "開始日"] = ""          # 開始日なし → 変換できない
+    rep = run(df, survival_dates=("開始日", "発生日", "打切日"))
+    assert len(rep.df_clean) == len(df)                     # 行は減らない
+    assert rep.df_clean["duration"].isna().sum() >= 10
+
+
 # ---------------------------------------------------------------- 減らしたもの
 def test_it_records_what_it_removed():
     """★何を捨てたかを言わない自動化は、信用してはならない。★"""

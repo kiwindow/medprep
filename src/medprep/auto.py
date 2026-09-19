@@ -318,6 +318,11 @@ def autoprep(
                              "mp.Survival(rep.survival.data, unit='years')")
             return sf
         res.survival = optional("生存時間の形にする", _sf)
+        if res.survival is not None:
+            added = _merge_survival(res, dfc)
+            if added:
+                step("観察期間とイベントを列にする", True,
+                     "、".join(added) + " を足した（★除外例は NaN。行は削除しない★）")
 
     # -------------------------------------------------------- 7) 欠損
     res.missing = analyze_missing(dfc, res.schema, group=group)
@@ -704,6 +709,46 @@ def _parse_dates(dfc, schema_raw, date_col, survival_dates, step, warn) -> dict:
         step("日付を解釈する", True,
              f"{done} 列を datetime に揃えた（並び: {'、'.join(sorted(orders))}）")
     return out
+
+
+def _merge_survival(res: PrepResult, dfc) -> list:
+    """★算出した観察期間とイベントを、そのまま列として残す。★
+
+    3 列の日付を指定したのに、書き出したデータに観察期間もイベントも入って
+    いなければ、指定した意味がない。`rep.survival.data` の中にしか無いと、
+    **Excel を開いた人には見えない。**
+
+    | 足す列 | 中身 |
+    |---|---|
+    | `duration` | 観察期間（`unit`。既定は年） |
+    | `event` | 1 = イベント発生、0 = 打ち切り |
+    | `_start` | 解釈済みの観察開始日 |
+    | `_end` | 解釈済みの観察終了日（イベント日または打ち切り日） |
+
+    生存時間に変換できなかった症例は **NaN** にする。★行は削除しない。★
+    役割は `TIME` / `EVENT` にしておく。`Schema.features()` はこの 2 つを
+    外すので、**目的変数そのものが説明変数に紛れ込むことはない。**
+    """
+    from .schema import EVENT, TIME, ColumnSpec
+
+    sf = res.survival
+    if sf is None or res.schema is None or not hasattr(sf, "data"):
+        return []
+    unit = getattr(sf, "unit", "years")
+    spec = {
+        "duration": (TIME, f"観察期間（{unit}）。観察開始日と終了日から算出した"),
+        "event": (EVENT, "イベントの有無（1=発生、0=打ち切り）。日付から判定した"),
+        "_start": (DATETIME, "観察開始日（解釈済み）"),
+        "_end": (DATETIME, "観察終了日（イベント日または打ち切り日）"),
+    }
+    added = []
+    for c, (role, why) in spec.items():
+        if c not in sf.data.columns or c in dfc.columns:
+            continue
+        dfc[c] = sf.data[c].reindex(dfc.index)
+        res.schema.columns[c] = ColumnSpec(name=c, role=role, action="keep", reason=why)
+        added.append(c)
+    return added
 
 
 def _build_use_frame(res: PrepResult, dfc):
