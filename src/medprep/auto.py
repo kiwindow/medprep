@@ -568,8 +568,7 @@ def _write_all(res: PrepResult, *, step, t0, save_data=True) -> None:
         put(p.file("table", "Table1_2.xlsx"), res.gt.to_excel)
         put(p.file("table", "Table1_2.docx"), res.gt.to_docx)
     if res.removed is not None:
-        put(p.file("table", "除外の記録.xlsx"),
-            lambda q: _excel(res.removed, q))
+        put(p.file("table", "除外の記録.xlsx"), _removed_book(res))
     if res.outputs is not None:
         put(p.file("table", "書き出したデータの説明.xlsx"),
             lambda q: _excel(res.outputs, q))
@@ -892,6 +891,47 @@ def _build_use_frame(res: PrepResult, dfc):
              if c in dfc.columns and c not in keep]
     use, table = encode_binary_columns(dfc[keep], res.schema)
     return use, table
+
+
+def excluded_cases(res: PrepResult) -> pd.DataFrame:
+    """**「外すのが望ましい」と印を付けた症例の一覧。**
+
+    印は `掃除済みデータ.xlsx` の 2 列（`除外推奨` / `除外推奨_理由`）にも入っているが、
+    600 行の中から 22 行を探すのは人の仕事ではない。**一覧にして別に出す。**
+
+    ★行は削除していない。★ 外すかどうかは医学的な判断であって、
+    自動化が黙って決めることではない。この表は「人が決めるための材料」である。
+    """
+    dfc = res.df_clean
+    if dfc is None or EXCLUDE_FLAG not in dfc.columns:
+        return pd.DataFrame(columns=["元の行", "理由"])
+    hit = dfc[dfc[EXCLUDE_FLAG] == 1]
+    if not len(hit):
+        return pd.DataFrame(columns=["元の行", "理由"])
+    out = pd.DataFrame({"元の行": list(hit.index)})
+    if res.id_col and res.id_col in hit.columns:
+        out[res.id_col] = hit[res.id_col].to_numpy()
+    out["理由"] = hit[EXCLUDE_REASON].to_numpy()
+    # ★日付の列を添える。★ 除外の理由はほとんど日付の矛盾なので、
+    #   理由だけ見せられても人は確かめようがない。
+    if res.schema is not None:
+        for c in res.schema.by_role(DATETIME):
+            if c in hit.columns:
+                out[c] = hit[c].to_numpy()
+    return out
+
+
+def _removed_book(res: PrepResult):
+    """`除外の記録.xlsx` を書く。**まとめと、症例の一覧の 2 枚組。**"""
+    def _write(q):
+        cases = excluded_cases(res)
+        with pd.ExcelWriter(q, engine="openpyxl") as w:
+            res.removed.to_excel(w, sheet_name="まとめ", index=False)
+            _fmt_sheet(w.sheets["まとめ"], res.removed)
+            book = _date_only(cases)
+            book.to_excel(w, sheet_name="外すのが望ましい症例", index=False)
+            _fmt_sheet(w.sheets["外すのが望ましい症例"], book)
+    return _write
 
 
 def _outputs_table(res: PrepResult, *, save: bool, save_data: bool) -> pd.DataFrame:

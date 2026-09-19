@@ -659,3 +659,33 @@ def test_the_outputs_table_lists_the_file_it_did_not_make(tmp_path):
     assert "前処理済み_train.xlsx" in names
     row = t[t["ファイル"].astype(str).str.contains("前処理済み")].iloc[0]
     assert "作っていない" in str(row["施した処置"])
+
+
+def test_the_cases_flagged_for_exclusion_are_listed_in_their_own_sheet(tmp_path):
+    """★600 行の中から 22 行を探すのは人の仕事ではない。★
+
+    印は掃除済みデータの 2 列にも入っているが、それとは別に一覧を出す。
+    理由だけでなく**日付の列も添える** ―― 除外の理由はほとんど日付の矛盾なので、
+    理由だけ見せられても人は確かめようがない。
+    """
+    from openpyxl import load_workbook
+
+    import medprep as mp
+
+    df = _survival_frame(300)
+    df.loc[df.index[:8], "開始日"] = ""           # 開始日なし → 除外推奨
+    rep = run(df, survival_dates=("開始日", "発生日", "打切日"),
+              save=True, out_dir=str(tmp_path), method="T")
+    assert rep.n_excluded >= 8
+    assert len(rep.df_clean) == len(df)            # ★行は削除しない★
+
+    book = tmp_path / "T" / "run1" / "table" / "除外の記録.xlsx"
+    assert load_workbook(book).sheetnames == ["まとめ", "外すのが望ましい症例"]
+    cases = pd.read_excel(book, sheet_name="外すのが望ましい症例")
+    assert len(cases) == rep.n_excluded
+    assert {"元の行", "仮名ID", "理由"} <= set(cases.columns)
+    assert (cases["理由"].astype(str).str.len() > 0).all()
+    assert "開始日" in cases.columns                # 理由を確かめる材料が添えてある
+
+    # 同じものが API からも取れる
+    assert len(mp.excluded_cases(rep)) == rep.n_excluded
