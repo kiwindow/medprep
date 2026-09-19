@@ -4,6 +4,9 @@
 """
 import json
 import pathlib
+import shutil
+import subprocess
+import sys
 
 C = []      # cells
 
@@ -279,8 +282,6 @@ md("""
 """)
 
 code("""
-import contextlib
-
 import ipywidgets as widgets
 import pandas as pd
 from IPython.display import clear_output, display
@@ -1313,3 +1314,20 @@ out = str(pathlib.Path(__file__).resolve().parent / f"Preprocessing_{VERSION}.ip
 with open(out, "w", encoding="utf-8") as f:
     json.dump(nb, f, ensure_ascii=False, indent=1)
 print(f"{len(C)} cells ->", out)
+
+
+# ★作った .ipynb にその場で ruff を掛ける。★
+#   ruff は .ipynb も検査する。しかし生成側（この .py）はセルの中身を**文字列**で
+#   持っているので、ここに ruff を掛けてもセル内の未使用 import は見つからない。
+#   実際 0.9.3 で、使わなくなった `import contextlib` が残ったまま出て行き、
+#   **CI の ruff で初めて気づいた**。作った直後に自分で掛ければ、そこで止まる。
+_exe = shutil.which("ruff") or str(pathlib.Path(sys.prefix) / "bin" / "ruff")
+if not pathlib.Path(_exe).exists():
+    print("  ※ ruff が見つからないので自己検査はしていない")
+else:
+    _r = subprocess.run([_exe, "check", out], capture_output=True, text=True)
+    if _r.returncode == 0:
+        print("  ruff: 問題なし")
+    else:
+        print(_r.stdout or _r.stderr)
+        raise SystemExit("★作ったノートブックが ruff に通らない。上を直すこと★")
