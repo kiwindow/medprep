@@ -8,6 +8,8 @@ import shutil
 import subprocess
 import sys
 
+VERSION = "Ver1_9"
+
 C = []      # cells
 
 
@@ -1299,6 +1301,21 @@ md("""
 **同じコードが自分のデータでも動く。** そこが第3回の山場である。
 """)
 
+# ★実行の記録に残る名前を、版から自動で入れる。★
+#   ここを手で直す作りにしていたので Ver1_0 のまま置き去りになっていた。
+#   log/history.csv は「どのノートブックが出した結果か」を見るためのものなので、
+#   名前が古いままだと記録として役に立たない。
+_OLD_NAME = "NOTEBOOK_NAME = 'Preprocessing_Ver1_0'"
+_NEW_NAME = f"NOTEBOOK_NAME = 'Preprocessing_{VERSION}'"
+_hit = 0
+for _c in C:
+    for _i, _ln in enumerate(_c["source"]):
+        if _OLD_NAME in _ln:
+            _c["source"][_i] = _ln.replace(_OLD_NAME, _NEW_NAME)
+            _hit += 1
+if _hit != 1:
+    raise SystemExit(f"★NOTEBOOK_NAME の行が {_hit} 個見つかった（1 個のはず）★")
+
 nb = {
     "cells": _fix(C),
     "metadata": {
@@ -1309,7 +1326,6 @@ nb = {
     "nbformat": 4,
     "nbformat_minor": 0,
 }
-VERSION = "Ver1_8_3"
 out = str(pathlib.Path(__file__).resolve().parent / f"Preprocessing_{VERSION}.ipynb")
 with open(out, "w", encoding="utf-8") as f:
     json.dump(nb, f, ensure_ascii=False, indent=1)
