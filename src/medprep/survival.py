@@ -121,6 +121,7 @@ class CoxResult:
     reference_levels: dict = field(default_factory=dict)
     strata: list = field(default_factory=list)
     fit_frame: pd.DataFrame = field(default_factory=pd.DataFrame)
+    imputation: pd.DataFrame = field(default_factory=pd.DataFrame)   # 補完した列・欠損率・値
     n: int = 0
     n_events: int = 0
     n_dropped: int = 0
@@ -149,6 +150,9 @@ class CoxResult:
             f"共変量 = {len(self.covariates)}、EPV = {self.epv:.1f}"
             + ("  ★EPV < 10★" if self.epv < EPV_MIN else ""),
         ]
+        if len(self.imputation):
+            lines += ["\n★共変量の欠損を補完した（数値は中央値・カテゴリは最頻値）★",
+                      frame_text(self.imputation)]
         if self.n_dropped:
             lines.append(f"欠測により除外: {self.n_dropped} 例"
                          f"（うちイベント {self.events_dropped} 件）")
@@ -405,7 +409,8 @@ class Survival:
 
     # -------------------------------------------------------------- Cox
     def cox(self, covariates="auto", *, strata=None, screen_p: float = 0.10,
-            penalizer: float = 0.0, check_ph: bool = True) -> CoxResult:
+            penalizer: float = 0.0, check_ph: bool = True,
+            impute: str | None = "median") -> CoxResult:
         """Cox 比例ハザード回帰。
 
         Parameters
@@ -414,6 +419,10 @@ class Survival:
             "auto" なら schema の説明変数を単変量でスクリーニングし、
             p < `screen_p` のものを多変量に入れる。**逐次選択は使わない。**
         strata : 層別化する列（比例ハザードが成り立たない変数の逃げ道）
+        impute : "median"（既定）なら共変量の欠損を**数値は中央値・カテゴリは最頻値**で
+            補完する。★何をいくつ、何で埋めたかは `res.imputation` と report に必ず出る。★
+            None にすると補完せず、欠損のある症例を除いて推定する（完全ケース解析）。
+            Cox は欠損のある症例を黙って落とすので、補完しなければ n が減る。
         """
         res = CoxResult(strata=[strata] if isinstance(strata, str) else list(strata or []))
         cands = self._candidates(covariates)
@@ -421,7 +430,16 @@ class Survival:
             res.failed = "共変量が 1 つも無い（schema を確認するか covariates= で指定すること）"
             return res
 
-        design, refs, dropped_cols, notes = self._design(cands)
+        data = self.data
+        if impute:
+            data, res.imputation = _impute_covariates(self.data, cands)
+            if len(res.imputation):
+                res.notes.append(
+                    f"共変量 {len(res.imputation)} 本の欠損を補完した（数値は中央値・"
+                    f"カテゴリは最頻値）。欠損率は res.imputation を見ること。"
+                    f"欠損が多い列ほど、補完が結果を左右する。impute=None で補完せずに"
+                    f"推定して、結果が変わらないかを確かめること")
+        design, refs, dropped_cols, notes = self._design(cands, data)
         res.reference_levels = refs
         res.notes += notes
         if dropped_cols:
@@ -650,18 +668,19 @@ class Survival:
                 and (pd.api.types.is_numeric_dtype(self.data[c])
                      or self.data[c].nunique(dropna=True) <= 10)]
 
-    def _design(self, cands: list):
+    def _design(self, cands: list, data: pd.DataFrame | None = None):
         """共変量を数値の設計行列にする。
 
         カテゴリはダミー化し、**どの水準を基準にしたかを必ず記録する。**
         基準が分からなければハザード比は読めない。
         """
+        data = self.data if data is None else data
         cols, refs, dropped, notes = {}, {}, [], []
         for c in cands:
-            if c not in self.data.columns:
+            if c not in data.columns:
                 dropped.append(f"{c}（データに無い）")
                 continue
-            s = self.data[c]
+            s = data[c]
             nu = s.nunique(dropna=True)
             if nu < 2:
                 dropped.append(f"{c}（値が 1 種類）")
@@ -685,7 +704,7 @@ class Survival:
                 cols[name] = (s.astype(str) == str(lv)).astype(float).where(s.notna())
             notes.append(f"'{c}' をダミー化した（基準 = '{ref}'。"
                          f"ハザード比は基準水準との比である）")
-        return pd.DataFrame(cols, index=self.data.index), refs, dropped, notes
+        return pd.DataFrame(cols, index=data.index), refs, dropped, notes
 
     # -------------------------------------------------------------- 報告
     def report(self, by: str | None = None, covariates="auto") -> str:
@@ -769,6 +788,32 @@ def _at(km: KaplanMeierFitter, t: float) -> str:
     if not np.isfinite(t) or t <= 0 or t > km.timeline.max():
         return "—"
     return f"{float(km.predict(t)):.1%}"
+
+
+def _impute_covariates(data: pd.DataFrame, cands: list):
+    """共変量の欠損を埋める。**数値は中央値、カテゴリ（と 0/1）は最頻値。**
+
+    何を、いくつ、何で埋めたかを表にして返す（欠損率を必ず併記する）。
+    """
+    out = data.copy()
+    rows = []
+    n = len(out)
+    for c in cands:
+        if c not in out.columns:
+            continue
+        s = out[c]
+        k = int(s.isna().sum())
+        if k == 0 or k == n:
+            continue
+        if pd.api.types.is_numeric_dtype(s) and s.nunique(dropna=True) > 2:
+            val, how = float(s.median()), "中央値"
+        else:
+            val, how = s.mode(dropna=True).iloc[0], "最頻値"
+        out[c] = s.fillna(val)
+        rows.append({"列": c, "欠損数": k, "欠損率": round(k / n, 4), "方法": how,
+                     "補完した値": round(val, 4) if isinstance(val, float) else val})
+    tab = pd.DataFrame(rows, columns=["列", "欠損数", "欠損率", "方法", "補完した値"])
+    return out, tab.sort_values("欠損率", ascending=False).reset_index(drop=True)
 
 
 def _reverse_km_median(d, e) -> float:

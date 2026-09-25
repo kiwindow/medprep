@@ -271,7 +271,84 @@ def to_hours(v) -> float:
     if not m:
         return float("nan")
     h, mi = int(m.group(1)), int(m.group(2))
-    return h + mi / 60 if (0 <= h < 24 and 0 <= mi < 60) else float("nan")
+    # ★24 時以上（〜47 時）も読む。★ 日をまたいだ終了時刻は `25:35` のように
+    #   書き出している（`normalize_times`）。自分の出力を読み直せなければならない。
+    return h + mi / 60 if (0 <= h < 48 and 0 <= mi < 60) else float("nan")
+
+
+def format_hhmm(h: float) -> str | None:
+    """「0 時からの時間」を `HH:MM` にする。24 以上はそのまま `25:35` のように書く。"""
+    if h is None or (isinstance(h, float) and np.isnan(h)):
+        return None
+    total = int(round(float(h) * 60))
+    return f"{total // 60:02d}:{total % 60:02d}"
+
+
+def _is_time_col(name) -> bool:
+    # ★「time」だけで判定しない。★ 生存時間の `time`（観察年数）まで時刻として
+    #   読み、0.5 年を「12:00」にしてしまう。時刻であると言える列名に限る。
+    n = _norm(str(name)).lower()
+    return "時刻" in n or re.search(r"(start|end|begin|finish)[_\s]*time", n) is not None
+
+
+def normalize_times(df: pd.DataFrame) -> tuple[pd.DataFrame, list, dict]:
+    """★時刻の列の書き方を `HH:MM` に揃える。★
+
+    実務の時刻列には `9:30`・`09:30`・`9時30分`・`13：15`（全角）・Excel の小数が
+    混ざる。**読めたものだけを `HH:MM` に直し、読めないものは元のまま残す**
+    （空欄にしない。人が元の記録と突き合わせられなくなるから）。
+
+    ★日をまたぐ透析★（例: 21:00 開始 → 1:35 終了）は、終了時刻を
+    **例外的に `25:35`** と書く。`1:35` のままだと、終了が開始より前に見え、
+    「入力ミスなのか、日をまたいだのか」が表からは分からなくなる。
+    何例をそうしたかは戻り値の notes と dict に残す。
+
+    Returns
+    -------
+    (直した DataFrame, notes, {"crossed": 日またぎの行の index, "unreadable": {列: 件数}})
+    """
+    out = df.copy()
+    notes, info = [], {"crossed": [], "unreadable": {}, "columns": []}
+    cols = [c for c in out.columns if _is_time_col(c)]
+    if not cols:
+        return out, notes, info
+
+    hours = {}
+    for c in cols:
+        v = out[c]
+        h = pd.Series([to_hours(x) for x in v], index=out.index, dtype=float)
+        present = v.notna() & (v.astype(str).str.strip() != "")
+        if present.sum() == 0 or h[present].notna().mean() < 0.5:
+            continue            # ★時刻の列ではない（または読めない）。手を触れない★
+        hours[c] = h
+
+    # 開始と終了の対（日をまたいだかどうかは対でしか分からない）
+    c_start = next((c for c in hours if "開始" in str(c) or "start" in str(c).lower()), None)
+    c_end = next((c for c in hours if "終了" in str(c) or "end" in str(c).lower()), None)
+    if c_start and c_end:
+        a, b = hours[c_start], hours[c_end]
+        cross = a.notna() & b.notna() & (b < a) & (b < 24)
+        hours[c_end] = b.where(~cross, b + 24)
+        info["crossed"] = list(out.index[cross])
+
+    for c, h in hours.items():
+        present = out[c].notna() & (out[c].astype(str).str.strip() != "")
+        bad = present & h.isna()
+        new = out[c].astype(object).copy()
+        ok = h.notna()
+        new[ok] = [format_hhmm(x) for x in h[ok]]
+        out[c] = new
+        info["columns"].append(c)
+        if bad.any():
+            info["unreadable"][c] = int(bad.sum())
+        notes.append(f"'{c}' を HH:MM に揃えた（{int(ok.sum())} 件）"
+                     + (f"。★読めない {int(bad.sum())} 件は元の書き方のまま残した★"
+                        if bad.any() else ""))
+    if info["crossed"]:
+        notes.append(f"★日をまたいだ透析が {len(info['crossed'])} 例ある。"
+                     f"'{c_end}' を 24 時を超える書き方（例 25:35）にした★"
+                     "（翌日の 1:35 = 25:35。開始より前に見える終了時刻を入力ミスと区別するため）")
+    return out, notes, info
 
 
 def session_hours(start, end) -> pd.Series:

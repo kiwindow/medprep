@@ -40,7 +40,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from .clean import build_alias_map, load_dict
+from .clean import _is_time_col, build_alias_map, load_dict, to_hours
 from .dates import parse_date_series
 from .textfmt import frame_text
 from .timing import UNKNOWN as TIMING_UNKNOWN
@@ -58,13 +58,14 @@ BINARY = "binary"
 ORDINAL = "ordinal"
 NOMINAL = "nominal"
 HIGH_CARDINALITY = "high_cardinality"
+TIME_OF_DAY = "time_of_day"      # 時刻（透析開始時刻など）。透析時間の材料で、特徴量にはしない
 TEXT = "text"
 CONSTANT = "constant"
 DUPLICATE = "duplicate_of"
 UNKNOWN = "unknown"
 
 # 既定で解析から外す役割
-_DROP_BY_DEFAULT = {ID, HIGH_CARDINALITY, TEXT, CONSTANT, DUPLICATE}
+_DROP_BY_DEFAULT = {ID, HIGH_CARDINALITY, TIME_OF_DAY, TEXT, CONSTANT, DUPLICATE}
 
 # 列名が ID を示唆する語
 _ID_NAME = re.compile(
@@ -289,6 +290,18 @@ def infer_column(
     if is_dt:
         return mk(DATETIME, f"{rate:.0%} の値を日付として解釈できた（並び: {order}）")
 
+    # --- 時刻（★水準が多いだけの列として扱わない★）
+    #     透析開始時刻・終了時刻は 30〜70 種類の値を持つので、放っておくと
+    #     「水準が多すぎる列」になる。**時刻は透析時間の材料であって、
+    #     それ自体を説明変数にはしない**ので落とすが、落とす理由は正しく書く。
+    if _is_time_col(name):
+        vals = s.dropna()
+        ok = float(np.mean([not np.isnan(to_hours(v)) for v in vals])) if len(vals) else 0.0
+        if ok >= 0.5:
+            return mk(TIME_OF_DAY,
+                      f"時刻の列（{ok:.0%} を時刻として読めた）。透析時間の材料なので"
+                      f"特徴量にはしない（列は掃除済みデータに HH:MM で残る）")
+
     # --- ほぼ全行で異なる列
     #     ★ユニーク率だけで「識別子」と決めない。★
     #     備考のような自由記載もユニーク率 1.00 になる。識別子か自由記載かは
@@ -361,7 +374,7 @@ class Schema:
         #   欠測そのものが情報を持つことはあるが、多くは単なる入力漏れで
         #   意味を持たない。欠測率 0.5% の列の指示子はほぼ定数で、
         #   正則化モデルを不安定にするだけである。
-        #   **欠測がどこにあったかは `前処理済み_*.xlsx` の
+        #   **欠測がどこにあったかは `5_training_data・6_test_data（本コード専用）` の
         #   「欠損値の位置」シートに 0/1 で残るので、情報は失われない。**
         #   特徴量として使いたいときは policy で明示的に True にする。
         "missing": {"numeric": "median", "categorical": "most_frequent",

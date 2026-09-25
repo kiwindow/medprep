@@ -219,11 +219,24 @@ def test_cox_reports_how_many_cases_the_missing_covariates_removed():
     df = frame(300)
     df["y"] = rng.normal(0, 1, len(df))
     df.loc[df.index[:80], "y"] = np.nan
-    c = s_(df).cox(covariates=["x", "y"])
+    c = s_(df).cox(covariates=["x", "y"], impute=None)      # 補完しない（完全ケース）
     assert c.n == 220 and c.n_dropped == 80
     assert c.events_dropped >= 0
     w = " ".join(c.warnings)
     assert "80 例" in w and "黙って減る" in w and "y" in w
+
+
+def test_cox_imputes_by_default_and_says_what_it_filled():
+    """★0.11 から既定で補完する。★ 何を・いくつ・何で埋めたかを必ず出す。"""
+    df = frame(300)
+    df["y"] = rng.normal(0, 1, len(df))
+    df.loc[df.index[:80], "y"] = np.nan
+    c = s_(df).cox(covariates=["x", "y"])
+    assert c.n == 300 and c.n_dropped == 0
+    t = c.imputation
+    assert list(t["列"]) == ["y"] and int(t["欠損数"].iloc[0]) == 80
+    assert t["欠損率"].iloc[0] == round(80 / 300, 4) and t["方法"].iloc[0] == "中央値"
+    assert "補完" in c.report() and "欠損率" in c.report()
 
 
 def test_cox_warns_when_epv_is_below_ten():

@@ -349,14 +349,14 @@ def test_the_html_report_has_a_removed_section():
 def test_save_writes_the_cleaned_and_prepared_data(isolated):
     rep = run(outcome="転帰", task="classification", save=True)
     d = os.path.join(rep.run.run, "data")
-    for name in ("掃除済みデータ.xlsx", "前処理済み_train.xlsx", "前処理済み_test.xlsx"):
+    for name in ("1_掃除済みデータ.xlsx", "5_training_data_本コード専用.xlsx", "6_test_data_本コード専用.xlsx"):
         assert os.path.exists(os.path.join(d, name)), name
     assert os.path.exists(rep.run.file("table", "除外の記録.xlsx"))
 
 
 def test_the_prepared_file_carries_the_outcome_column(isolated):
     rep = run(outcome="転帰", task="classification", save=True)
-    tr = pd.read_excel(os.path.join(rep.run.run, "data", "前処理済み_train.xlsx"))
+    tr = pd.read_excel(os.path.join(rep.run.run, "data", "5_training_data_本コード専用.xlsx"))
     assert "転帰" in tr.columns
     assert len(tr) == len(rep.X_train)
     # 先頭に「元の行」「仮名ID」、末尾に目的変数。その間が特徴量。
@@ -430,7 +430,7 @@ def test_a_column_that_is_not_a_date_is_left_alone():
 
 def test_parsed_dates_reach_the_saved_file(isolated):
     rep = run(messy_dates(), date_col="検査日", save=True)
-    book = pd.read_excel(os.path.join(rep.run.run, "data", "掃除済みデータ.xlsx"),
+    book = pd.read_excel(os.path.join(rep.run.run, "data", "1_掃除済みデータ.xlsx"),
                          sheet_name="データ")
     assert pd.api.types.is_datetime64_any_dtype(book["検査日"])
 
@@ -439,7 +439,7 @@ def test_parsed_dates_reach_the_saved_file(isolated):
 def test_the_cleaned_workbook_says_which_columns_were_dropped(isolated):
     """★落とすと決めた列が、保存したファイルから分かること。★"""
     rep = run(save=True)
-    book = pd.read_excel(os.path.join(rep.run.run, "data", "掃除済みデータ.xlsx"),
+    book = pd.read_excel(os.path.join(rep.run.run, "data", "1_掃除済みデータ.xlsx"),
                          sheet_name=None)
     assert set(book) == {"データ", "列の扱い", "減らしたもの"}
     treat = book["列の扱い"]
@@ -450,10 +450,10 @@ def test_the_cleaned_workbook_says_which_columns_were_dropped(isolated):
 def test_the_analysis_file_has_the_dropped_columns_removed(isolated):
     rep = run(save=True)
     d = os.path.join(rep.run.run, "data")
-    full = pd.read_excel(os.path.join(d, "掃除済みデータ.xlsx"), sheet_name="データ")
-    use = pd.read_excel(os.path.join(d, "解析用データ.xlsx"))
+    full = pd.read_excel(os.path.join(d, "1_掃除済みデータ.xlsx"), sheet_name="データ")
+    use = pd.read_excel(os.path.join(d, "2_解析用データ.xlsx"))
     assert "仮名ID" in full.columns          # 人が症例を辿れるように残す
-    assert "仮名ID" not in use.columns       # 解析には使わない
+    assert "仮名ID" in use.columns           # ★0.11: 他の表と結合できるよう ID は残す★
     assert len(use) == len(full)             # 行は減らさない
 
 
@@ -510,16 +510,16 @@ def test_the_saved_files_keep_every_row(isolated):
     df.loc[df.index[:10], "転帰"] = np.nan
     rep = run(df, outcome="転帰", task="classification", save=True)
     d = os.path.join(rep.run.run, "data")
-    for name in ("掃除済みデータ.xlsx", "解析用データ.xlsx"):
+    for name in ("1_掃除済みデータ.xlsx", "2_解析用データ.xlsx"):
         assert len(pd.read_excel(os.path.join(d, name), sheet_name=0)) == 150, name
-    use = pd.read_excel(os.path.join(d, "解析用データ.xlsx"))
+    use = pd.read_excel(os.path.join(d, "2_解析用データ.xlsx"))
     assert {"除外推奨", "除外推奨_理由"} <= set(use.columns)
 
 
 def test_the_prepared_file_can_be_traced_back_to_the_original_rows(isolated):
     """train / test は部分集合なので、元の行番号と ID を付けておく。"""
     rep = run(outcome="転帰", task="classification", save=True)
-    tr = pd.read_excel(os.path.join(rep.run.run, "data", "前処理済み_train.xlsx"))
+    tr = pd.read_excel(os.path.join(rep.run.run, "data", "5_training_data_本コード専用.xlsx"))
     assert list(tr.columns)[:2] == ["元の行", "仮名ID"]
     assert set(tr["元の行"]) <= set(rep.df_clean.index)
 
@@ -537,7 +537,7 @@ def test_dates_are_written_without_the_time_part(isolated):
     """★Excel に 00:00:00 を出さない。★ 検査日は年月日で読むものである。"""
     import openpyxl
     rep = run(messy_dates(), date_col="検査日", save=True)
-    path = os.path.join(rep.run.run, "data", "掃除済みデータ.xlsx")
+    path = os.path.join(rep.run.run, "data", "1_掃除済みデータ.xlsx")
     ws = openpyxl.load_workbook(path)["データ"]
     header = [c.value for c in ws[1]]
     col = header.index("検査日") + 1
@@ -555,7 +555,8 @@ def test_the_outputs_table_explains_each_file(isolated):
     o = rep.outputs
     assert set(o.columns) == {"ファイル", "行", "列", "施した処置", "使いどころ"}
     names = " ".join(o["ファイル"])
-    assert "掃除済み" in names and "解析用" in names and "前処理済み" in names
+    assert "掃除済み" in names and "解析用" in names and "機械学習用" in names
+    assert "training_data" in names and "test_data" in names
     # 段が進むほど処置が増える
     lens = o["施した処置"].str.len().tolist()
     assert lens[0] < lens[1] < lens[2]
@@ -609,9 +610,9 @@ def test_the_prepared_matrix_also_keeps_the_raw_values_on_a_second_sheet(tmp_pat
     df = _survival_frame()
     run(df, outcome="転帰", task="classification",
         save=True, out_dir=str(tmp_path), method="T")
-    book = tmp_path / "T" / "run1" / "data" / "前処理済み_train.xlsx"
+    book = tmp_path / "T" / "run1" / "data" / "5_training_data_本コード専用.xlsx"
     assert book.exists()
-    assert load_workbook(book).sheetnames == ["標準化後", "生の値", "欠損値の位置"]
+    assert load_workbook(book).sheetnames == ["標準化後", "生の値", "欠損値の位置", "補完の記録"]
 
     raw = pd.read_excel(book, sheet_name="生の値")
     std = pd.read_excel(book, sheet_name="標準化後")
@@ -627,7 +628,7 @@ def test_the_untouched_original_is_saved_too(tmp_path):
     df = _survival_frame()
     rep = run(df, outcome="転帰", task="classification",
               save=True, out_dir=str(tmp_path), method="T")
-    raw = pd.read_excel(tmp_path / "T" / "run1" / "data" / "元データ.xlsx")
+    raw = pd.read_excel(tmp_path / "T" / "run1" / "data" / "0_元データ.xlsx")
     assert len(raw) == len(df)
     assert list(raw.columns) == list(df.columns)
     assert any("元データ" in f for f in rep.saved)
@@ -642,7 +643,7 @@ def test_it_says_why_there_is_no_train_test_when_no_outcome_was_given():
     rep = run(frame())                     # outcome を渡さない
     entry = [(n, d) for n, _ok, d in rep.steps if n == "train / test に分ける"]
     assert entry, "段そのものが記録に残っていない"
-    assert "目的変数" in entry[0][1] and "前処理済み" in entry[0][1]
+    assert "目的変数" in entry[0][1] and "training_data" in entry[0][1]
     assert any("前処理済みの行列" in n for n in rep.notes)
     assert rep.prepared is None
 
@@ -655,9 +656,9 @@ def test_the_outputs_table_lists_the_file_it_did_not_make(tmp_path):
     assert book
     t = pd.read_excel(book[0])
     names = " ".join(t["ファイル"].astype(str))
-    assert "元データ.xlsx" in names
-    assert "前処理済み_train.xlsx" in names
-    row = t[t["ファイル"].astype(str).str.contains("前処理済み")].iloc[0]
+    assert "0_元データ.xlsx" in names
+    assert "5_training_data_本コード専用.xlsx" in names
+    row = t[t["ファイル"].astype(str).str.contains("training_data")].iloc[0]
     assert "作っていない" in str(row["施した処置"])
 
 
@@ -674,6 +675,7 @@ def test_the_cases_flagged_for_exclusion_are_listed_in_their_own_sheet(tmp_path)
 
     df = _survival_frame(300)
     df.loc[df.index[:8], "開始日"] = ""           # 開始日なし → 除外推奨
+    df["備考"] = [f"特記事項その{i}：シャント再建の既往あり、経過観察中" for i in range(len(df))]
     rep = run(df, survival_dates=("開始日", "発生日", "打切日"),
               save=True, out_dir=str(tmp_path), method="T")
     assert rep.n_excluded >= 8
@@ -726,7 +728,7 @@ def test_the_cases_flagged_for_exclusion_are_listed_in_their_own_sheet(tmp_path)
 
     # ★症例レベルのデータには折返しを掛けない。★
     #   自由記載が 1 行あるだけで全行が高くなり、値を追えなくなる
-    dat = load_workbook(tmp_path / "T" / "run1" / "data" / "掃除済みデータ.xlsx")["データ"]
+    dat = load_workbook(tmp_path / "T" / "run1" / "data" / "1_掃除済みデータ.xlsx")["データ"]
     assert not any(dat.cell(2, j).alignment.wrap_text
                    for j in range(1, dat.max_column + 1))
 

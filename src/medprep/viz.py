@@ -685,13 +685,19 @@ def smd_forest(balance: pd.DataFrame, *, threshold: float = 0.1,
                    edgecolors=PALETTE.surface, linewidths=1.2,
                    label=f"|SMD| ≧ {threshold}（偏り）")
     ax.set_yticks(range(len(t)))
-    ax.set_yticklabels(t[label_col], fontsize=9)
+    # ★カテゴリの SMD は向きを持たない（常に 0 以上）。★ 正の側に並ぶのを
+    #   「train のほうが多い」と読まれないよう、ラベルに書いておく。
+    labels = [f"{lab}（カテゴリ・符号なし）" if "カテゴリ" in str(summ) else str(lab)
+              for lab, summ in zip(t[label_col], t.get("要約", [""] * len(t)))]
+    ax.set_yticklabels(labels, fontsize=9)
     for i, v in enumerate(t[smd_col].astype(float).to_numpy()):
         ax.annotate(f"{v:+.3f}", xy=(v, i), xytext=(9 if v >= 0 else -9, 0),
                     textcoords="offset points", va="center",
                     ha="left" if v >= 0 else "right", fontsize=8,
                     color=PALETTE.ink_secondary)
-    ax.set_xlabel("標準化差（SMD）")
+    # ★向きを軸に書く。★ 書かないと、負の値が「test のほうが大きい」のか
+    #   「train のほうが大きい」のか、図だけでは誰にも分からない。
+    ax.set_xlabel("標準化差 SMD（train − test）\n← test のほうが大きい ｜ train のほうが大きい →")
     ax.set_title(title, fontsize=11)
     ax.legend(fontsize=8, frameon=False, loc="lower right")
     lim = max(0.25, float(t["_abs"].max()) * 1.45)

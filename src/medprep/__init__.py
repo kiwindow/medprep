@@ -80,7 +80,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.10.7"
+__version__ = "0.11.0"
 __author__ = "Kazuhiro Iwadoh"
 __license__ = "MIT"
 
@@ -117,7 +117,14 @@ from .auto import (
     quicklook,
     removed_columns,
 )
-from .clean import CleanReport, build_alias_map, clean_numeric, derive, load_dict
+from .clean import (
+    CleanReport,
+    build_alias_map,
+    clean_numeric,
+    derive,
+    load_dict,
+    normalize_times,
+)
 from .dates import DateParseResult, parse_date_frame, parse_date_series
 from .describe import (
     Comparison,
@@ -147,6 +154,7 @@ from .hd import (
     tsat,
     urr,
 )
+from .horizon import HorizonResult, choose_horizon
 from .loading import read_any
 from .missing import MissingReport, drop_missing_outcome, mcar_signals
 from .missing import analyze as analyze_missing
@@ -191,6 +199,9 @@ from .timing import POST, PRE, UNKNOWN, TimingSchema, check_requirements, detect
 
 __all__ = [
     "__version__",
+    "normalize_times",
+    "choose_horizon",
+    "HorizonResult",
     # 層1（全自動 1 行）
     "autoprep", "quicklook", "PrepResult", "EXCLUDE_FLAG", "EXCLUDE_REASON",
     "excluded_cases",

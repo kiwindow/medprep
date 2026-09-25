@@ -260,7 +260,11 @@ def _time_split(df, time_order, test_size, notes, warnings):
 def balance_table(train: pd.DataFrame, test: pd.DataFrame,
                   schema: Schema | None = None,
                   columns: list | None = None) -> pd.DataFrame:
-    """train と test の分布を比べる。**|SMD| < 0.1 が目安。**"""
+    """train と test の分布を比べる。**|SMD| < 0.1 が目安。**
+
+    ★SMD の向きは train − test である。★ 正なら train の平均のほうが大きい。
+    カテゴリ（Yang & Dalton 法）は向きを持たないので、常に 0 以上になる。
+    """
     if columns is None:
         if schema is not None:
             columns = [c for c in schema.kept()
@@ -275,7 +279,13 @@ def balance_table(train: pd.DataFrame, test: pd.DataFrame,
         if c not in train.columns or c not in test.columns:
             continue
         a, b = train[c], test[c]
-        if pd.api.types.is_numeric_dtype(a) and a.nunique(dropna=True) > 2:
+        # ★カテゴリかどうかは schema の役割で決める。dtype で決めない。★
+        #   施設が 1, 2, 3… の番号で入っていると、dtype では連続変数に見え、
+        #   「番号の平均の差」という意味の無い SMD が出てしまう。
+        role = schema.columns[c].role if (schema is not None and c in schema.columns) else None
+        categorical = role in (NOMINAL, GROUP)
+        if (not categorical and pd.api.types.is_numeric_dtype(a)
+                and a.nunique(dropna=True) > 2):
             v = smd_continuous(a, b)
             rows.append({"列": c, "train": f"{pd.to_numeric(a, errors='coerce').mean():.3g}",
                          "test": f"{pd.to_numeric(b, errors='coerce').mean():.3g}",
@@ -288,7 +298,8 @@ def balance_table(train: pd.DataFrame, test: pd.DataFrame,
             rows.append({
                 "列": c, "train": f"{(a.astype(str) == top).mean():.1%}",
                 "test": f"{(b.astype(str) == top).mean():.1%}",
-                "要約": f"'{top}' の割合", "SMD": round(v, 3) if pd.notna(v) else None})
+                "要約": f"'{top}' の割合（カテゴリ。SMD は符号なし）",
+                "SMD": round(v, 3) if pd.notna(v) else None})
     out = pd.DataFrame(rows)
     if len(out):
         out["判定"] = ["—" if pd.isna(v) else ("偏り" if abs(v) >= 0.2 else "可")

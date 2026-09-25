@@ -32,9 +32,10 @@ import pandas as pd
 
 from . import paths as _paths
 from . import viz
-from .clean import clean_numeric, derive, derive_vintage, load_dict
+from .clean import clean_numeric, derive, derive_vintage, load_dict, normalize_times
 from .dates import parse_date_series
 from .describe import table_one, target_achievement
+from .horizon import choose_horizon
 from .loading import read_any
 from .missing import analyze as analyze_missing
 from .missing import drop_missing_outcome, mcar_signals
@@ -42,11 +43,31 @@ from .outliers import detect as detect_outliers
 from .pipeline import encode_binary_columns, leak_check, prepare
 from .quality import audit
 from .report import build_report
-from .schema import DATETIME, Schema
+from .schema import (
+    BINARY,
+    DATETIME,
+    GROUP,
+    NOMINAL,
+    NUMERIC,
+    ORDINAL,
+    OUTCOME,
+    ColumnSpec,
+    Schema,
+)
 from .splitting import split
 from .survival_input import build_survival
 from .tables import gt_tables
 from .textfmt import frame_text
+
+#: 書き出すデータのファイル名。★番号は加工の度合いの順。★
+F_RAW = "0_元データ.xlsx"
+F_CLEAN = "1_掃除済みデータ.xlsx"
+F_USE = "2_解析用データ.xlsx"
+F_ML = "3_機械学習用データ.xlsx"
+F_SURV = "4_生存時間用データ.xlsx"
+F_TRAIN = "5_training_data_本コード専用.xlsx"
+F_TEST = "6_test_data_本コード専用.xlsx"
+F_NO_OUTCOME = "目的変数がないため削除した行.xlsx"
 
 #: 「解析からは外すのが望ましい」行に付ける印。★行そのものは削除しない。★
 #:   削除すると元データと行数・並びが変わり、症例ごとに axis=1 で結合し直せなくなる。
@@ -92,6 +113,12 @@ class PrepResult:
     df_use: pd.DataFrame | None = None      # 解析用データ（列を落とし、二値を 0/1 に）
     dropped_rows: pd.DataFrame | None = None  # ★本当に削除した行★（全セルが空欄）
     dropped_outcome: dict = field(default_factory=dict)
+    time_info: dict = field(default_factory=dict)   # 時刻を揃えた記録（日またぎの行など）
+    horizon: object = None                  # 自動で作った目的変数（τ 以内のイベント）
+    df_ml: pd.DataFrame | None = None       # 3_機械学習用データ（分割・標準化なし）
+    df_surv: pd.DataFrame | None = None     # 4_生存時間用データ
+    no_outcome_rows: pd.DataFrame | None = None  # 目的変数がないため 3〜6 から除いた行
+    imputation: pd.DataFrame | None = None  # 5・6 で補完した列・欠損率・補完値
     warnings: list = field(default_factory=list)
     notes: list = field(default_factory=list)
     steps: list = field(default_factory=list)      # (段, 成否, 一言)
@@ -299,6 +326,15 @@ def autoprep(
         step("辞書で掃除する", True,
              f"{len(res.clean_report.to_frame())} 列を辞書と照合"
              + (f"、派生 {len(notes)} 件" if notes else ""))
+        # ★時刻の書き方を揃える（透析時間を算出したあと）。★
+        #   9:30・09:30・9時30分・13：15 を HH:MM に。日またぎの終了は 25:35 と書く。
+        res.df_clean, tnotes, res.time_info = normalize_times(res.df_clean)
+        if tnotes:
+            res.notes += tnotes
+            step("時刻の書き方を揃える", True, "；".join(tnotes))
+            for t in tnotes:
+                if "★" in t:
+                    warn(t)
     else:
         res.df_clean = df.copy()
         step("辞書で掃除する", False, "clean=False が指定された")
@@ -353,6 +389,34 @@ def autoprep(
             if added:
                 step("観察期間とイベントを列にする", True,
                      "、".join(added) + " を足した（★除外例は NaN。行は削除しない★）")
+
+    # -------------------------------------------------------- 6.5) 目的変数を自動で作る
+    #   ★目的変数の指定が無く、3 つの日付だけが指定されたとき。★
+    #   「イベントの有無」をそのまま 0/1 にすると観察期間の違いを無視することになる。
+    #   τ をデータから決め、「τ 以内のイベント」を目的変数にする（medprep.horizon）。
+    if outcome is None and survival_dates and res.survival is not None \
+            and "duration" in dfc.columns and "event" in dfc.columns:
+        def _hz():
+            return choose_horizon(dfc["duration"], dfc["event"],
+                                  unit=getattr(res.survival, "unit", "years"))
+        res.horizon = optional("目的変数を自動で作る", _hz)
+        if res.horizon is not None:
+            hz = res.horizon
+            outcome, task = hz.name, "classification"
+            dfc[outcome] = hz.outcome.reindex(dfc.index)
+            res.schema.columns[outcome] = ColumnSpec(
+                name=outcome, role=OUTCOME, action="keep",
+                reason=f"目的変数の指定が無いので自動で作った（{hz.reason}）")
+            res.schema.target = {"name": outcome, "task": task, "inferred_role": "auto"}
+            step("目的変数を自動で作る", True,
+                 f"'{outcome}'  1={hz.n1} / 0={hz.n0} / 判定できない={hz.n_undetermined}")
+            warn(f"★目的変数の指定が無いので、'{outcome}'（τ = {hz.tau:g} "
+                 f"{getattr(res.survival, 'unit', 'years')} 以内にイベントが起きたか）を"
+                 f"自動で目的変数にした★ {hz.reason}。τ より前に打ち切られた "
+                 f"{hz.n_undetermined} 例は判定できないので 3〜6 のデータから除いた。"
+                 "観察期間を使う正式な解析は 4_生存時間用データで行うこと")
+            for w in hz.warnings:
+                warn(w)
 
     # -------------------------------------------------------- 7) 欠損
     res.missing = analyze_missing(dfc, res.schema, group=group)
@@ -412,14 +476,18 @@ def autoprep(
             _, info = drop_missing_outcome(dfs, outcome)
             res.dropped_outcome = info
             dfs = dfs.loc[dfs[outcome].notna()]
-            step("目的変数が欠測の行に印を付ける", True,
+            step("目的変数がない行を 3〜6 から除く", True,
                  f"モデルに渡すのは {info['残り']} 例"
-                 f"（判定できない {info['除外']} 例に印。★削除はしない★）")
-            warn(f"目的変数 '{outcome}' が欠測の {info['除外']} 例に印を付けた"
-                 "（★目的変数は補完してはならない★。行は削除していない）")
+                 f"（目的変数がない {info['除外']} 例は 1・2 には残し、3〜6 から除いた）")
+            warn(f"目的変数 '{outcome}' がない {info['除外']} 例を 3〜6 のデータから除いた"
+                 "（★目的変数は補完してはならない★。1_掃除済み・2_解析用には残っている。"
+                 "一覧は data/目的変数がないため削除した行.xlsx）")
             res.schema = Schema.infer(dfs, outcome=outcome, task=task, group=group,
                                       id_col=id_col, survival=survival,
                                       survival_dates=survival_dates, dic=dic)
+            # ★推定し直すと、観察期間とイベントが「ふつうの数値列」に戻る。★
+            #   そのままではイベント（＝ほぼ目的変数）が説明変数に紛れ込む。役割を付け直す。
+            _survival_specs(res.schema, getattr(res.survival, "unit", "years"))
         res.split = split(dfs, res.schema, test_size=test_size, seed=seed)
         step("train / test に分ける", True, res.split.strategy
              + f"  train {res.split.n_train} / test {res.split.n_test}")
@@ -448,9 +516,9 @@ def autoprep(
         #   「前処理済み_train.xlsx が無い」とだけ見えて理由が分からなくなる。**
         step("train / test に分ける", False,
              "★目的変数（OUTCOME）の指定が無いので分割しない。"
-             "data/前処理済み_train.xlsx と _test.xlsx は作られない★")
+             f"data/{F_ML}・{F_TRAIN}・{F_TEST} は作られない★")
         res.notes.append(
-            "目的変数を指定しなかったので、前処理済みの行列（train / test）は作って"
+            "目的変数を指定しなかったので、機械学習用データと前処理済みの行列（training / test）は作って"
             "いない。予測するものが決まっていなければ、分割にも標準化にも意味がない。"
             "演習⑦で目的変数を作ってから、もう一度 autoprep を走らせること")
 
@@ -475,6 +543,22 @@ def autoprep(
         step("二値の列を 0/1 に直す", True,
              "、".join(f"{r['元の列']}→{r['作った列']}（1={r['1 = ']}）"
                        for _, r in res.encoded.iterrows()))
+
+    # -------------------------------------------------------- 11.7) 3・4 と、除いた行の一覧
+    if outcome and outcome in dfc.columns:
+        res.df_ml = optional("3_機械学習用データを作る",
+                             lambda: _build_ml_frame(res, dfc, outcome))
+        if res.df_ml is not None:
+            step("3_機械学習用データを作る", True,
+                 f"{len(res.df_ml)} 行 × {res.df_ml.shape[1]} 列"
+                 "（カテゴリはダミー変数。★分割・標準化・補完はしていない★）")
+    if res.survival is not None and hasattr(res.survival, "data"):
+        res.df_surv = _build_surv_frame(res, dfc)
+        step("4_生存時間用データを作る", True, f"{len(res.df_surv)} 行"
+             "（★観察期間・イベントを算出できない行は除いた★）")
+    res.no_outcome_rows = _no_outcome_rows(res, dfc, outcome, id_col)
+    if res.prepared is not None:
+        res.imputation = optional("補完の記録を作る", lambda: _imputation_table(res))
 
     # -------------------------------------------------------- 12) 図
     if do_figures:
@@ -789,12 +873,15 @@ def _excel(df, path, sheet_name="Sheet1", *, wrap: bool = False) -> None:
 
 
 def _save_data(res: PrepResult, p, put) -> None:
-    """掃除済みデータと前処理済み行列を書き出す。
+    """データを 0〜6 の番号で書き出す（番号は加工の度合いの順）。
 
-    **3 つは別ものである。**
-      掃除済み  … 値を掃除し日付を解釈した、**全列**のデータ（人が自分の記録と突き合わせる）
-      解析用    … そこから**落とすと決めた列を除いた**もの（ID・重複列・自由記載が消える）
-      前処理済み … スケール・符号化まで済ませた、**モデルに渡す**行列
+      0_元データ          … 何もしていない
+      1_掃除済みデータ    … 値を掃除し日付・時刻を揃えた、**全列**（人が記録と突き合わせる）
+      2_解析用データ      … **落とすと決めた列を除いた**もの（★ID は残す★）
+      3_機械学習用データ  … 特徴量と目的変数だけ。ダミー変数化。★分割・標準化・補完なし★
+      4_生存時間用データ  … duration・event と共変量（単位のまま）
+      5・6_本コード専用   … 3 を分割し、training だけで補完・標準化した行列
+      目的変数がないため削除した行 … 3〜6 から除いた行の一覧
 
     掃除済みから ID を抜かないのは、**人が症例を辿れなくなるから**である。
     「どの列を落としたか」は同じブックの 2 枚目・3 枚目に入れる。
@@ -809,7 +896,7 @@ def _save_data(res: PrepResult, p, put) -> None:
     # ★前処理前の元データも残す。★ 掃除の前と後を突き合わせられないと、
     #   「この値はもともとこうだったのか、機械が直したのか」が分からなくなる。
     if res.df_raw is not None:
-        put(os.path.join(d, "元データ.xlsx"), lambda q: _excel(res.df_raw, q))
+        put(os.path.join(d, F_RAW), lambda q: _excel(res.df_raw, q))
 
     if res.df_clean is not None:
         def _clean_book(q):
@@ -824,7 +911,7 @@ def _save_data(res: PrepResult, p, put) -> None:
                 if res.removed is not None and len(res.removed):
                     res.removed.to_excel(w, sheet_name="減らしたもの", index=False)
                     _fmt_sheet(w.sheets["減らしたもの"], res.removed, wrap=True)
-        put(os.path.join(d, "掃除済みデータ.xlsx"), _clean_book)
+        put(os.path.join(d, F_CLEAN), _clean_book)
 
         if res.df_use is not None:
             def _use_book(q):
@@ -834,7 +921,31 @@ def _save_data(res: PrepResult, p, put) -> None:
                     _fmt_sheet(w.sheets["データ"], book)
                     if res.encoded is not None and len(res.encoded):
                         res.encoded.to_excel(w, sheet_name="0と1の対応", index=False)
-            put(os.path.join(d, "解析用データ.xlsx"), _use_book)
+            put(os.path.join(d, F_USE), _use_book)
+
+    # --- 3_機械学習用データ（★分割・標準化・補完なし★）
+    if res.df_ml is not None:
+        def _ml_book(q):
+            with pd.ExcelWriter(q, engine="openpyxl") as w:
+                book = _date_only(res.df_ml)
+                book.to_excel(w, sheet_name="データ", index=False)
+                _fmt_sheet(w.sheets["データ"], book)
+                if res.encoded is not None and len(res.encoded):
+                    res.encoded.to_excel(w, sheet_name="0と1の対応", index=False)
+                if res.horizon is not None:
+                    hz = res.horizon.table
+                    hz.to_excel(w, sheet_name="目的変数の作り方", index=False)
+                    _fmt_sheet(w.sheets["目的変数の作り方"], hz, wrap=True)
+        put(os.path.join(d, F_ML), _ml_book)
+
+    # --- 4_生存時間用データ
+    if res.df_surv is not None:
+        put(os.path.join(d, F_SURV), lambda q: _excel(res.df_surv, q, sheet_name="データ"))
+
+    # --- 目的変数がないため削除した行（★3〜6 から除いた行。1・2 には残っている★）
+    if res.no_outcome_rows is not None and len(res.no_outcome_rows):
+        put(os.path.join(d, F_NO_OUTCOME),
+            lambda q: _excel(res.no_outcome_rows, q, sheet_name="削除した行", wrap=True))
 
     if res.prepared is None:
         return
@@ -907,10 +1018,14 @@ def _save_data(res: PrepResult, p, put) -> None:
                     miss = _with_meta(miss, None)
                     miss.to_excel(w, sheet_name="欠損値の位置", index=False)
                     _fmt_sheet(w.sheets["欠損値の位置"], miss)
+                # ★何を何で補完したか。欠損率を併記する。★
+                if res.imputation is not None and len(res.imputation):
+                    res.imputation.to_excel(w, sheet_name="補完の記録", index=False)
+                    _fmt_sheet(w.sheets["補完の記録"], res.imputation, wrap=True)
         return _write
 
-    put(os.path.join(d, "前処理済み_train.xlsx"), _prepared_book(res.X_train, res.y_train))
-    put(os.path.join(d, "前処理済み_test.xlsx"), _prepared_book(res.X_test, res.y_test))
+    put(os.path.join(d, F_TRAIN), _prepared_book(res.X_train, res.y_train))
+    put(os.path.join(d, F_TEST), _prepared_book(res.X_test, res.y_test))
 
 
 def _parse_dates(dfc, schema_raw, date_col, survival_dates, step, warn) -> dict:
@@ -980,26 +1095,194 @@ def _merge_survival(res: PrepResult, dfc) -> list:
     役割は `TIME` / `EVENT` にしておく。`Schema.features()` はこの 2 つを
     外すので、**目的変数そのものが説明変数に紛れ込むことはない。**
     """
-    from .schema import EVENT, TIME, ColumnSpec
-
     sf = res.survival
     if sf is None or res.schema is None or not hasattr(sf, "data"):
         return []
-    unit = getattr(sf, "unit", "years")
+    added = []
+    for c in _SURV_COLS:
+        if c not in sf.data.columns or c in dfc.columns:
+            continue
+        dfc[c] = sf.data[c].reindex(dfc.index)
+        added.append(c)
+    _survival_specs(res.schema, getattr(sf, "unit", "years"), only=added)
+    return added
+
+
+_SURV_COLS = ("duration", "event", "_start", "_end")
+
+
+def _survival_specs(schema, unit="years", only=None) -> None:
+    """観察期間・イベント・解釈済みの日付に役割を付ける（★説明変数にしない★）。"""
+    from .schema import EVENT, TIME
     spec = {
         "duration": (TIME, f"観察期間（{unit}）。観察開始日と終了日から算出した"),
         "event": (EVENT, "イベントの有無（1=発生、0=打ち切り）。日付から判定した"),
         "_start": (DATETIME, "観察開始日（解釈済み）"),
         "_end": (DATETIME, "観察終了日（イベント日または打ち切り日）"),
     }
-    added = []
     for c, (role, why) in spec.items():
-        if c not in sf.data.columns or c in dfc.columns:
+        if only is not None and c not in only:
             continue
-        dfc[c] = sf.data[c].reindex(dfc.index)
-        res.schema.columns[c] = ColumnSpec(name=c, role=role, action="keep", reason=why)
-        added.append(c)
-    return added
+        if only is None and c not in schema.columns:
+            continue
+        schema.columns[c] = ColumnSpec(name=c, role=role, action="keep", reason=why)
+
+
+def _build_ml_frame(res: PrepResult, dfc, outcome) -> pd.DataFrame:
+    """**3_機械学習用データ** ―― 機械学習のプログラムにそのまま渡せる表。
+
+    | すること | しないこと |
+    |---|---|
+    | 目的変数がない行を除く | ★train / test に分けない★ |
+    | 特徴量と目的変数だけを残す（ID と元の行番号は先頭に付ける） | ★標準化しない（単位のまま）★ |
+    | 二値は 0/1 の 1 本に、カテゴリはダミー変数にする | ★欠損を補完しない★ |
+
+    分割・標準化・補完は、機械学習のプログラムの側に備わっている。
+    ここでやってしまうと二重に掛かり、しかも**全データで fit したリーク**になる。
+    """
+    sch = res.schema
+    feats = [c for c in sch.features()
+             if c in dfc.columns and c != outcome
+             and sch.columns[c].role in (NUMERIC, ORDINAL, BINARY, NOMINAL, GROUP)]
+    rows = dfc[outcome].notna()
+    X = dfc.loc[rows, feats]
+    X, _tab = encode_binary_columns(X, sch)          # 二値 → 0/1（1 が何かを列名で示す）
+
+    parts = []
+    for c in list(X.columns):
+        sp = sch.columns.get(c)
+        role = sp.role if sp is not None else NUMERIC
+        v = X[c]
+        if sp is None or role == NUMERIC or (role == BINARY and sp.value_map):
+            parts.append(pd.to_numeric(v, errors="coerce").rename(c))
+        elif role == ORDINAL:
+            if pd.api.types.is_numeric_dtype(v):
+                parts.append(v.rename(c))
+            else:
+                order = [str(x) for x in (sp.order or sorted(map(str, v.dropna().unique())))]
+                pos = {o: i for i, o in enumerate(order)}
+                parts.append(v.map(lambda x, pos=pos: pos.get(str(x), np.nan)
+                                   if pd.notna(x) else np.nan).rename(c))
+        else:
+            # ★ダミー変数。基準（最初の水準）は列を作らない。★ 欠損は欠損のまま
+            #   （全部 0 にすると「基準の水準だった」ことになってしまう）。
+            levels = sorted(map(str, v.dropna().unique()))
+            for lv in levels[1:]:
+                parts.append((v.astype(str) == lv).astype(float).where(v.notna())
+                             .rename(f"{c}={lv}"))
+    out = pd.concat(parts, axis=1) if parts else pd.DataFrame(index=X.index)
+    out.insert(0, "元の行", list(out.index))
+    if res.id_col and res.id_col in dfc.columns:
+        out.insert(1, res.id_col, dfc.loc[out.index, res.id_col].to_numpy())
+    out[outcome] = dfc.loc[out.index, outcome].to_numpy()
+    return out
+
+
+def _build_surv_frame(res: PrepResult, dfc) -> pd.DataFrame:
+    """**4_生存時間用データ** ―― 観察期間・イベントを算出できた症例だけ。
+
+    共変量は**単位のまま**（標準化しない）。Cox のハザード比を
+    「Alb 1 g/dL あたり」のように臨床の単位で読めるようにするためである。
+    """
+    d = res.survival.data.copy()
+    d.insert(0, "元の行", list(d.index))
+    return d
+
+
+def _no_outcome_rows(res: PrepResult, dfc, outcome, id_col) -> pd.DataFrame:
+    """**目的変数がないため 3〜6 から除いた行**の一覧（1・2 には残っている）。"""
+    cols = ["元の行", "Excel の行", "ID", "理由", "除いたファイル"]
+    reasons = pd.Series("", index=dfc.index, dtype=object)
+    files = pd.Series("", index=dfc.index, dtype=object)
+
+    def add(mask, why, where):
+        m = mask.reindex(dfc.index, fill_value=False).fillna(False).astype(bool)
+        reasons[m] = (reasons[m] + "／" + why).str.lstrip("／")
+        files[m] = [_join_files(f, where) for f in files[m]]
+
+    hz = res.horizon
+    if outcome and outcome in dfc.columns:
+        miss = dfc[outcome].isna()
+        if hz is not None and outcome == hz.name and "duration" in dfc.columns:
+            und = miss & dfc["duration"].notna()
+            add(und, f"τ（{hz.tau:g}）より前に打ち切られ、'{outcome}' を判定できない",
+                "3・5・6")
+            add(miss & dfc["duration"].isna(),
+                "観察期間・イベントを算出できない（目的変数を作れない）", "3・5・6")
+        else:
+            add(miss, f"目的変数 '{outcome}' が空欄", "3・5・6")
+    sf = res.survival
+    if sf is not None and hasattr(sf, "data"):
+        gone = ~dfc.index.isin(sf.data.index)
+        why = pd.Series("観察期間・イベントを算出できない", index=dfc.index)
+        exc = getattr(sf, "excluded", None)
+        if exc is not None and len(exc) and "理由" in exc.columns:
+            why.loc[why.index.intersection(exc.index)] = \
+                ("生存時間: " + exc["理由"].astype(str)).reindex(
+                    why.index.intersection(exc.index))
+        for r in sorted(set(why[gone])):
+            add(pd.Series(gone, index=dfc.index) & (why == r), r, "4")
+    hit = reasons != ""
+    if not hit.any():
+        return pd.DataFrame(columns=cols)
+    out = pd.DataFrame({"元の行": list(dfc.index[hit]),
+                        "Excel の行": [int(i) + 2 for i in dfc.index[hit]]
+                        if pd.api.types.is_integer_dtype(dfc.index) else "",
+                        "ID": dfc.loc[hit, id_col].to_numpy()
+                        if id_col and id_col in dfc.columns else "",
+                        "理由": reasons[hit].to_numpy(),
+                        "除いたファイル": files[hit].to_numpy()})
+    return out[cols]
+
+
+def _join_files(have: str, add: str) -> str:
+    """「3・5・6」と「4」を、番号順に重ねずにつなぐ。"""
+    got = {x for x in f"{have}・{add}".split("・") if x}
+    return "・".join(sorted(got, key=lambda x: int(x) if x.isdigit() else 99))
+
+
+def _imputation_table(res: PrepResult) -> pd.DataFrame:
+    """5・6 で**何を、何で補完したか**。欠損率を必ず併記する。
+
+    補完の値（中央値・最頻値）は **training だけ**から計算し、test にはその値を当てた。
+    """
+    prep = res.prepared.preprocessor
+    ct, design = prep.ct, prep.design
+    tr, te = res.split.train, res.split.test
+    rows = []
+
+    def stats_of(name):
+        try:
+            return ct.named_transformers_[name].named_steps["imp"].statistics_
+        except Exception:                                            # noqa: BLE001
+            return None
+
+    groups = [("num", design.get("numeric", []), "中央値"),
+              ("ord", design.get("ordinal", []), "最頻値"),
+              ("bin", design.get("binary", []), "最頻値"),
+              ("cat", design.get("categorical", []), "最頻値")]
+    for key, cols, how in groups:
+        st = stats_of(key)
+        for i, c in enumerate(cols):
+            if c not in tr.columns:
+                continue
+            val = st[i] if st is not None and i < len(st) else None
+            if key == "bin" and val is not None:
+                m = design.get("binary_maps", {}).get(c, {})
+                inv = {v: k for k, v in m.items()}
+                val = f"{val:g}（{inv.get(int(val), '')}）" if pd.notna(val) else val
+            elif isinstance(val, float):
+                val = round(val, 4)
+            rows.append({"列": c, "方法": how + "（training だけで計算）",
+                         "補完した値": val,
+                         "欠損数_training": int(tr[c].isna().sum()),
+                         "欠損率_training": round(float(tr[c].isna().mean()), 4),
+                         "欠損数_test": int(te[c].isna().sum()),
+                         "欠損率_test": round(float(te[c].isna().mean()), 4)})
+    out = pd.DataFrame(rows)
+    if len(out):
+        out = out.sort_values("欠損率_training", ascending=False).reset_index(drop=True)
+    return out
 
 
 def _build_use_frame(res: PrepResult, dfc):
@@ -1016,6 +1299,11 @@ def _build_use_frame(res: PrepResult, dfc):
     keep = [c for c in res.schema.kept() if c in dfc.columns]
     keep += [c for c in (EXCLUDE_FLAG, EXCLUDE_REASON)
              if c in dfc.columns and c not in keep]
+    # ★ID は残す。★ ID が無いと、他の表と症例ごとに結合するときに
+    #   行の並びに頼るしかなくなる。並べ替えた途端に黙ってずれる。
+    idc = res.id_col
+    if idc and idc in dfc.columns and idc not in keep:
+        keep = [idc] + keep
     use, table = encode_binary_columns(dfc[keep], res.schema)
     return use, table
 
@@ -1065,10 +1353,10 @@ def removed_columns(res: PrepResult) -> pd.DataFrame:
     cols = ["対象", "理由", "段"]
     rem = res.removed
     if rem is None or not len(rem):
-        return pd.DataFrame(columns=cols)
+        return pd.DataFrame(columns=["列", "理由", "段"])
     hit = rem[(rem["種類"] == "列") & (rem["処置"] == COL_DROPPED)]
     if not len(hit):
-        return pd.DataFrame(columns=cols)
+        return pd.DataFrame(columns=["列", "理由", "段"])
     out = hit[cols].reset_index(drop=True)
     out.insert(0, "列", out.pop("対象"))
     return out
@@ -1101,7 +1389,7 @@ def _removed_book(res: PrepResult):
 def _outputs_table(res: PrepResult, *, save: bool, save_data: bool) -> pd.DataFrame:
     """**どのファイルに何が入っていて、そこまでに何をしたか。**
 
-    「掃除済み」「解析用」「前処理済み」は、**施した処置が 1 段ずつ違う。**
+    番号は**加工の度合いの順**である（0 が生、6 が最も加工した行列）。
     どれを使えばよいか分からないまま渡されるのがいちばん困るので、表にして出す。
     """
     zero = ("⓪ **全てのセルが空欄の行を削除**（drop_empty_rows=True のときだけ）　"
@@ -1109,14 +1397,18 @@ def _outputs_table(res: PrepResult, *, save: bool, save_data: bool) -> pd.DataFr
     clean_steps = (zero + "① 欠損コード（999 等）と『未測定』を NaN に　"
                    "② 検出限界（<0.1）を数値化　③ 単位の混在を換算　"
                    "④ 生理学的にあり得ない値を NaN に　⑤ 派生指標を追加（補正Ca 等）　"
-                   "⑥ 日付を解釈（和暦・全角・シリアル値）　⑦ 外すのが望ましい行に印")
-    use_steps = (clean_steps + "　⑧ **解析に使わない列を削除**（ID・重複列・自由記載）"
+                   "⑥ 日付を解釈（和暦・全角・シリアル値）　"
+                   "⑥b **時刻を HH:MM に揃える**（日をまたぐ終了は 25:35 と書く）　"
+                   "⑦ 外すのが望ましい行に印")
+    use_steps = (clean_steps + "　⑧ **解析に使わない列を削除**（重複列・自由記載・時刻。"
+                 "★ID は残す★）"
                  "　⑧b **二値の列を 0/1 に**（性別 → **男性**：1=男性・0=女性）")
-    prep_steps = (use_steps + "　⑨ **目的変数が欠測の症例を除く**　⑩ train/test に分割　"
-                  "⑪ 欠損を補完・⑫ スケーリング・"
-                  "⑬ カテゴリをダミー化（二値は 0/1 の 1 本にまとめ、"
-                  "1 が何かが分かる列名にする。性別 → **男性**：1=男性・0=女性）"
-                  "（★⑪〜⑬ は train だけで fit★）")
+    ml_steps = (use_steps + "　⑨ **目的変数がない行を除く**（一覧は " + F_NO_OUTCOME + "）"
+                "　⑩ 特徴量と目的変数だけにする　⑪ カテゴリをダミー変数に"
+                "（★分割・標準化・補完はしない★）")
+    prep_steps = (ml_steps + "　⑫ training / test に分割　"
+                  "⑬ 欠損を補完（中央値・最頻値。★欠損率とあわせて「補完の記録」シートに★）・"
+                  "⑭ 外れ値を丸める・⑮ 標準化（★⑬〜⑮ は training だけで fit★）")
 
     n_raw = len(res.df_raw) if res.df_raw is not None else 0
     n_gone = 0 if res.dropped_rows is None else len(res.dropped_rows)
@@ -1130,34 +1422,51 @@ def _outputs_table(res: PrepResult, *, save: bool, save_data: bool) -> pd.DataFr
                      "施した処置": steps, "使いどころ": use})
 
     if res.df_raw is not None:
-        add("data/元データ.xlsx", f"{n_raw}（元と同じ）", f"{res.df_raw.shape[1]}（全列）",
+        add("data/" + F_RAW, f"{n_raw}（元と同じ）", f"{res.df_raw.shape[1]}（全列）",
             "★何もしていない（前処理前のまま）★", "掃除の前と後を突き合わせる")
     if res.df_clean is not None:
-        add("data/掃除済みデータ.xlsx",
+        add("data/" + F_CLEAN,
             same, f"{res.df_clean.shape[1]}（全列）",
             clean_steps,
             "人が読む。元の記録と症例ごとに突き合わせる（ID が残っている）")
-        if res.schema is not None:
-            keep = [c for c in res.schema.kept() if c in res.df_clean.columns]
-            keep += [c for c in (EXCLUDE_FLAG, EXCLUDE_REASON)
-                     if c in res.df_clean.columns and c not in keep]
-            add("data/解析用データ.xlsx",
-                same,
-                f"{len(keep)}（落とす列を除く）", use_steps,
+        if res.df_use is not None:
+            add("data/" + F_USE,
+                same, f"{res.df_use.shape[1]}（落とす列を除く。ID は残す）", use_steps,
                 "自分で解析する。行が減っていないので元データと axis=1 で結合できる")
 
+    if res.df_ml is not None:
+        n_no = len(res.df_clean) - len(res.df_ml) if res.df_clean is not None else 0
+        add("data/" + F_ML, f"{len(res.df_ml)}（★目的変数がない {n_no} 行を除く★）",
+            f"{res.df_ml.shape[1]}（元の行・ID・特徴量・目的変数）", ml_steps,
+            "機械学習のプログラム（回帰・分類アプリ）に渡す。★単位のまま・分割なし★")
+    else:
+        add("data/" + F_ML, "—", "—", "★作っていない★",
+            "目的変数（OUTCOME）の指定が無く、3 つの日付も指定されていないため")
+    if res.df_surv is not None:
+        n_no = len(res.df_clean) - len(res.df_surv) if res.df_clean is not None else 0
+        add("data/" + F_SURV,
+            f"{len(res.df_surv)}（★観察期間を算出できない {n_no} 行を除く★）",
+            f"{res.df_surv.shape[1]}（ID・duration・event・共変量）",
+            clean_steps + "　⑨ 観察開始日・イベント発生日・打ち切り日から duration と event を作る"
+            "（★共変量は単位のまま★）",
+            "Kaplan-Meier・log-rank・Cox に渡す。ハザード比は臨床の単位で読める")
+    else:
+        add("data/" + F_SURV, "—", "—", "★作っていない★",
+            "観察開始日・イベント発生日・打ち切り日の 3 つが指定されていないため")
+
     if res.prepared is None:
-        add("data/前処理済み_train.xlsx / _test.xlsx", "—", "—",
-            "★作っていない★",
-            "目的変数（OUTCOME）の指定が無いため。"
-            "予測するものが決まっていなければ分割にも標準化にも意味がない")
-    if res.prepared is not None:
-        add("data/前処理済み_train.xlsx",
-            f"{len(res.X_train)}（★部分集合★）", f"{res.X_train.shape[1]}（特徴量のみ）",
-            prep_steps, "モデルの学習に渡す。元の行番号と ID が付いている")
-        add("data/前処理済み_test.xlsx",
-            f"{len(res.X_test)}（★部分集合★）", f"{res.X_test.shape[1]}（特徴量のみ）",
-            prep_steps + "（test は transform のみ）", "モデルの評価に使う")
+        add("data/" + F_TRAIN + " / " + F_TEST, "—", "—", "★作っていない★",
+            "目的変数が無いため。予測するものが決まっていなければ分割にも標準化にも意味がない")
+    else:
+        add("data/" + F_TRAIN,
+            f"{len(res.X_train)}（★3 の部分集合★）", f"{res.X_train.shape[1]}（特徴量のみ）",
+            prep_steps, "★このコードの中だけで使う★（標準化済み）。元の行番号と ID が付いている")
+        add("data/" + F_TEST,
+            f"{len(res.X_test)}（★3 の部分集合★）", f"{res.X_test.shape[1]}（特徴量のみ）",
+            prep_steps + "（test は transform のみ）", "★このコードの中だけで使う★（評価用）")
+    if res.no_outcome_rows is not None and len(res.no_outcome_rows):
+        add("data/" + F_NO_OUTCOME, f"{len(res.no_outcome_rows)}", "5（元の行・ID・理由など）",
+            "3〜6 から除いた行の一覧", "★どの行を除いたかを自分で確かめる★（1・2 には残っている）")
 
     out = pd.DataFrame(rows, columns=["ファイル", "行", "列", "施した処置", "使いどころ"])
     if not save or not save_data:
@@ -1182,7 +1491,10 @@ def _mark_excluded(res: PrepResult, dfc, outcome, id_col, step) -> pd.Series:
         why[m] = (why[m] + "／" + reason).str.lstrip("／")
 
     # --- 目的変数が欠測
-    if outcome and outcome in dfc.columns:
+    #   ★自動で作った「τ 以内のイベント」が判定できないだけの症例には印を付けない。★
+    #   τ より前に打ち切られたのは症例の欠陥ではない。生存時間解析（4）には正しく入る。
+    auto = res.horizon is not None and outcome == getattr(res.horizon, "name", None)
+    if outcome and outcome in dfc.columns and not auto:
         mark(dfc[outcome].isna(), f"目的変数 '{outcome}' が欠測")
 
     # --- 生存時間に変換できない（ID で元の行に戻す）
@@ -1239,6 +1551,14 @@ def _removed_table(res: PrepResult, dfc, outcome) -> pd.DataFrame:
             if c in (EXCLUDE_FLAG, EXCLUDE_REASON):
                 continue
             spec = res.schema.columns[c]
+            if c == res.id_col:
+                # ★ID は 2_解析用データにも残す★（症例ごとに結合し直すため）
+                rows.append({"種類": "列", "対象": str(c), "件数": 1,
+                             "処置": COL_UNUSED,
+                             "理由": f"{spec.reason}。ID は特徴量にはしないが、他の表と"
+                                   "症例ごとに結合できるよう 2_解析用データにも残す",
+                             "段": f"列の役割の推定（{spec.role}）"})
+                continue
             rows.append({"種類": "列", "対象": str(c), "件数": 1,
                          "処置": COL_DROPPED,
                          "理由": spec.reason, "段": f"列の役割の推定（{spec.role}）"})
