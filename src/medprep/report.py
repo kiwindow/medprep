@@ -239,7 +239,10 @@ def build_report(
            "<b>列の役割</b>（2.）→ 行と列の処理（3.）→ 書き出したデータ（4.）→ "
            "欠損と外れ値（5.・6.）→ 記述統計（7.）→ 生存時間（8.）→ "
            "分割と前処理（9.）→ 図（10.）→ 再現性（11.）、と降りていく。", kind="html")
-    s.text("<b>番号はノートブック（Preprocessing）の「第3部 結果の確認」と同じである。</b>"
+    s.text("<b>番号はノートブック（Preprocessing）の「第3部 結果の確認」（1.〜7.）と"
+           "「第4部 生存時間分析と機械学習」（8.〜11.）と同じである。</b>"
+           "1.〜7. は autoprep が自動で行った処理、8.〜11. は autoprep が作ったデータを使って"
+           "人が決めて行う解析（Kaplan-Meier・Cox・予測モデル）の準備である。"
            "ここで気になった所は、ノートブックの同じ番号の節で、表を全部表示したり"
            "計算をやり直したりして確かめられる。"
            "ノートブックにだけある節（測定法の変更・透析前後・Kaplan-Meier と Cox など）は、"
@@ -452,7 +455,7 @@ def build_report(
 
     # --- 分割と前処理
     if split is not None or preprocessor is not None:
-        s = rep.section("9. 分割と前処理 ―― モデルに渡す行列")
+        s = rep.section("9. 分割と前処理 ―― 機械学習の準備（モデルに渡す行列）")
     if split is not None:
         s.text("9.1 分割", kind="h3")
         s.text(f"{split.strategy}：train {split.n_train} 例 / test {split.n_test} 例。")

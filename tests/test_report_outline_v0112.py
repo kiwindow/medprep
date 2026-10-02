@@ -109,3 +109,12 @@ def test_missing_map_labels_are_vertical():
     rots = {round(t.get_rotation()) for ax in fig.axes for t in ax.get_xticklabels()
             if t.get_text()}
     assert rots == {90}, rots
+
+
+def test_reading_guide_names_parts_3_and_4():
+    """0.11.3 — ノートブック Ver3_5 の部立て（第3部 1.〜7.・第4部 8.〜11.）を案内する。"""
+    rep = mp.autoprep(_frame(), id_col="仮名ID", survival_dates=DATES, save=True, verbose=False)
+    html = rep.html.to_html()
+    assert "「第3部 結果の確認」（1.〜7.）" in html
+    assert "「第4部 生存時間分析と機械学習」（8.〜11.）" in html
+    assert "9. 分割と前処理 ―― 機械学習の準備（モデルに渡す行列）" in html
