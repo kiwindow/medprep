@@ -33,6 +33,7 @@ import numpy as np
 import pandas as pd
 
 from . import paths as _paths
+from . import rerun as _rerun
 from . import viz
 from .clean import clean_numeric, derive, derive_vintage, load_dict, normalize_times
 from .dates import parse_date_series
@@ -242,6 +243,7 @@ def autoprep(
     policy: dict | None = None,
     dic: dict | None = None,
     verbose: bool = True,
+    schema=None,
 ) -> PrepResult:
     """読み込みから前処理済み行列とレポートまでを 1 行で通す。
 
@@ -258,6 +260,10 @@ def autoprep(
         `除外の記録.xlsx` の「削除した行」シートに残す。
     do_split : "auto" なら `outcome` があるときだけ分割して前処理まで行う
     save : True なら `~/lab_output/{method}/run{N}/` 以下に全出力を保存する
+    schema : 前に保存した `schema.yaml` のパス（または Schema）。0.12.0〜。
+        ★渡すと、その設定（run 欄: GROUP・seed・test_size など）と列の判断（role・action）を、
+        ここに渡した引数より優先して使う。★ 食い違いは「人の確認が要る事項」に出る。
+        同じデータ・同じ版なら結果は元と一致する（再現）。直した所だけが変わる。
     save_data : `save=True` のとき、掃除済みデータと前処理済み行列も書き出す。
         ★これは症例レベルのデータである。★ 置き場所には `.gitignore` を必ず置くが、
         受け渡しには注意すること。要らなければ False。
@@ -299,6 +305,35 @@ def autoprep(
                 warn(n)
     df = res.df_raw
 
+    # -------------------------------------------------------- 1.2) schema.yaml の設定
+    #   ★schema.yaml を渡されたら、その設定を引数より優先する（再現のため）。★ 0.12.0〜
+    given = None
+    settings = {"outcome": outcome, "task": task, "group": group, "id_col": id_col,
+                "survival": survival, "survival_dates": survival_dates, "date_col": date_col,
+                "columns": columns, "table1_columns": table1_columns, "test_size": test_size,
+                "seed": seed, "clean": clean, "drop_empty_rows": drop_empty_rows,
+                "do_split": do_split}
+    if schema is not None:
+        given = _rerun.load_schema(schema)
+        settings, msgs = _rerun.resolve_settings(given, settings, list(res.df_raw.columns))
+        (outcome, task, group, id_col, survival, survival_dates, date_col, columns,
+         table1_columns, test_size, seed, clean, drop_empty_rows, do_split) = (
+            settings[k] for k in ("outcome", "task", "group", "id_col", "survival",
+                                  "survival_dates", "date_col", "columns", "table1_columns",
+                                  "test_size", "seed", "clean", "drop_empty_rows", "do_split"))
+        res.id_col = id_col
+        if policy is not None and given.policy and policy != given.policy:
+            msgs.append(f"★policy の引数 {policy!r} は使わず、schema.yaml の policy を使った★")
+            policy = None
+        step("schema.yaml を使う", True,
+             (str(schema) if not isinstance(schema, Schema) else "（渡された Schema）")
+             + ("（設定と列の判断を引数より優先する）" if given.run else
+                "（★run 欄の無い 0.11.x 以前の形式★）"))
+        for m in msgs:
+            warn(m)
+    run_settings = dict(settings)          # ★τ で目的変数を作る前の値を残す★
+    edits: list = []
+
     # -------------------------------------------------------- 1.5) 全部空欄の行
     #   ★既定では削除しない。★ 行を削除すると症例数と並びが変わり、
     #   元のデータと症例ごとに axis=1 で結合し直せなくなる。
@@ -310,6 +345,8 @@ def autoprep(
     res.schema_raw = Schema.infer(
         df, outcome=outcome, task=task, group=group, id_col=id_col,
         survival=survival, survival_dates=survival_dates, dic=dic)
+    if given is not None:
+        _rerun.apply_overrides(res.schema_raw, given)
     step("列の役割を推定する", True,
          f"{len(res.schema_raw.columns)} 列（うち解析から外す列 "
          f"{len(res.schema_raw.dropped())} 本）")
@@ -366,6 +403,8 @@ def autoprep(
     res.schema = Schema.infer(
         dfc, outcome=outcome, task=task, group=group, id_col=id_col,
         survival=survival, survival_dates=survival_dates, dic=dic)
+    if given is not None:
+        edits = _rerun.apply_overrides(res.schema, given)
 
     # -------------------------------------------------------- 6) 生存時間の形
     if survival_dates:
@@ -497,6 +536,8 @@ def autoprep(
             res.schema = Schema.infer(dfs, outcome=outcome, task=task, group=group,
                                       id_col=id_col, survival=survival,
                                       survival_dates=survival_dates, dic=dic)
+            if given is not None:
+                edits = _rerun.apply_overrides(res.schema, given)
             # ★推定し直すと、観察期間とイベントが「ふつうの数値列」に戻る。★
             #   そのままではイベント（＝ほぼ目的変数）が説明変数に紛れ込む。役割を付け直す。
             _survival_specs(res.schema, getattr(res.survival, "unit", "years"))
@@ -506,6 +547,9 @@ def autoprep(
         for w in res.split.warnings:
             warn(w)
 
+        if policy:
+            # ★引数の policy も schema.yaml に残す（残さないと再現できない）。★ 0.12.0〜
+            res.schema.policy = {**(res.schema.policy or {}), **policy}
         res.prepared = prepare(res.split, res.schema, policy, columns=columns)
         step("前処理を train だけで fit する", True,
              f"{res.prepared.X_train.shape[1]} 特徴量"
@@ -580,6 +624,15 @@ def autoprep(
         step("図を描く", True, f"{len(res.figures)} 枚"
              + (f"（描けなかったもの: {[t for t, _ in res.figures.skipped]}）"
                 if res.figures.skipped else ""))
+
+    # -------------------------------------------------------- 12.5) 設定を schema に残す
+    #   ★列の判断だけでは再現できない。seed・test_size・GROUP なども schema.yaml に残す。★ 0.12.0〜
+    if res.schema is not None:
+        res.schema.run = _rerun.run_block(run_settings, _pkg_version())
+        if given is not None:
+            for m in (_rerun.describe_edits(edits, res.schema)
+                      + _rerun.coverage_messages(given, res.schema)):
+                warn(m)
 
     # -------------------------------------------------------- 13) 保存先を先に決める
     #   ★レポートに「どのファイルに何を書いたか」を載せるため、
@@ -1634,8 +1687,12 @@ def _removed_table(res: PrepResult, dfc, outcome) -> pd.DataFrame:
 
 
 def _write_version(path) -> None:
+    from . import __version__
     with open(path, "w", encoding="utf-8") as f:
         f.write(_pkg_version() + "\n")
+        # ★同じ版を入れるコマンド（GitHub の版ごとの目印 v0.x.y を使う）。★ 0.12.0〜
+        f.write(f'# 同じ版を入れる: uv add "medprep @ git+https://github.com/kiwindow/medprep@v{__version__}"\n')
+        f.write(f'#   Colab の場合 : !pip install "git+https://github.com/kiwindow/medprep@v{__version__}"\n')
 
 
 def _pkg_version() -> str:

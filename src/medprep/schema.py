@@ -368,6 +368,9 @@ class Schema:
     policy: dict = field(default_factory=dict)
     source: str = "medprep.schema.infer"
     notes: list = field(default_factory=list)
+    #: ★autoprep に渡した設定（0.12.0〜）。★ seed・test_size・GROUP など、
+    #  列の判断以外で結果を左右するものをすべて残す。`autoprep(schema=...)` はこれを優先する。
+    run: dict = field(default_factory=dict)
 
     DEFAULT_POLICY = {
         # ★欠損指示子は既定では作らない。★
@@ -557,6 +560,7 @@ class Schema:
     def to_dict(self) -> dict:
         return {
             "source": self.source,
+            "run": self.run or {},
             "target": self.target,
             "survival": self.survival,
             "policy": self.policy,
@@ -570,11 +574,16 @@ class Schema:
         header = (
             "# medprep schema — 自動推定の結果。**人が直して再実行できる。**\n"
             "#\n"
+            "#   run    : autoprep に渡した設定（GROUP・seed・test_size など）\n"
             "#   role   : 列の役割。drop したくなければ action を keep にする\n"
             "#   action : keep / drop\n"
             "#   reason : なぜそう判断したか（自動生成。直した場合は書き換えること）\n"
             "#\n"
-            "# このファイルと元データと medprep の版があれば、前処理を完全に再現できる。\n"
+            "# このファイルと元データ（data/0_元データ.xlsx）と medprep の版があれば、\n"
+            "# 前処理を完全に再現できる:\n"
+            "#     rr = mp.reproduce('…/run{N}')         # 再実行して元の結果と照合する\n"
+            "#     rep = mp.autoprep(df, schema='…/schema.yaml', save=True)   # 直して再実行する\n"
+            "# ★schema.yaml の設定は、autoprep に渡した引数より優先される。★\n"
             "# 論文の Methods に「前処理は medprep、設定は補足資料の schema.yaml のとおり」\n"
             "# と書ける状態を保つこと。\n\n")
         text = header + text
@@ -590,12 +599,16 @@ class Schema:
                 d = yaml.safe_load(f)
         except OSError:
             d = yaml.safe_load(path_or_text)
+        if not isinstance(d, dict):
+            raise FileNotFoundError(
+                f"schema.yaml を読めなかった: {str(path_or_text)[:200]}"
+                "（ファイルの場所を確かめること）")
         cols = {}
         for name, spec in (d.get("columns") or {}).items():
             cols[name] = ColumnSpec(name=name, **spec)
         return cls(columns=cols, target=d.get("target"), survival=d.get("survival"),
                    policy=d.get("policy") or {}, source=d.get("source", "schema.yaml"),
-                   notes=d.get("notes") or [])
+                   notes=d.get("notes") or [], run=d.get("run") or {})
 
     def diff(self, other: Schema) -> pd.DataFrame:
         """2 つの schema の違いを表にする。**手で直した箇所を確かめるために使う。**"""

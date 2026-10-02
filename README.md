@@ -120,6 +120,30 @@ autoprep  600 行 × 21 列（19.6 秒）
 
 `mp.quicklook(...)` は分割も前処理もせず、全体を見るだけです。
 
+### 直して再実行する・再現する（0.12.0〜）
+
+`run{N}/model/schema.yaml` には、列の役割と判断の理由に加えて、`autoprep` に渡した設定
+（`run:` 欄: GROUP・目的変数・生存時間の列・seed・test_size など）が残ります。
+
+```python
+# 判断を直して再実行する（schema.yaml を別名で保存して直し、そのパスを渡す）
+rep = mp.autoprep(df, schema=".../run1/model/schema_edited.yaml", save=True)
+
+# 元データ（data/0_元データ.xlsx）と schema.yaml から再実行し、元の結果と照合する
+rr = mp.reproduce(".../Preprocessing/run1")
+rr.identical      # True なら 0〜6 のファイル・列の判断・設定がすべて一致
+rr.table          # ファイルごとの一致
+```
+
+**`schema.yaml` の値は、`autoprep` に渡した引数より優先します。**再現が目的なので、
+ノートブックの設定を後から変えても結果が変わらない方が安全だからです。
+食い違い・直した判断・使った設定は「人の確認が要る事項」に出ます。
+0.11.x 以前の `schema.yaml`（`run:` 欄なし）も読めます（seed などは引数の値を使います）。
+
+同じ版を入れるには、`model/medprep_version.txt` の 2 行目のコマンド
+（`uv add "medprep @ git+https://github.com/kiwindow/medprep@v0.12.0"`）を使います。
+版ごとに `v0.x.y` の目印（タグ）を付けています。
+
 ### 保存先は既存教材の `run{N}` 規約
 
 ```

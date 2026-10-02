@@ -80,7 +80,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.11.3"
+__version__ = "0.12.0"
 __author__ = "Kazuhiro Iwadoh"
 __license__ = "MIT"
 
@@ -98,6 +98,7 @@ from . import (
     pipeline,
     quality,
     report,
+    rerun,
     schema,
     splitting,
     survival,
@@ -173,6 +174,7 @@ from .pipeline import (
 )
 from .quality import AuditReport, Finding, audit, method_change_steps
 from .report import Report, build_report
+from .rerun import Reproduction, reproduce
 from .schema import ColumnSpec, Schema, binary_output_name, infer_column
 from .splitting import SplitResult, cv_splitter, fold_summary, mark_as, split
 from .survival import (
@@ -206,6 +208,8 @@ __all__ = [
     "autoprep", "quicklook", "PrepResult", "EXCLUDE_FLAG", "EXCLUDE_REASON",
     "excluded_cases",
     "removed_columns",
+    # 再現（schema.yaml から再実行して元と照合する）
+    "reproduce", "Reproduction",
     # 読み込みと保存先
     "read_any", "new_run", "RunPaths", "RunLog",
     # 表を文字で出す（日本語の幅で桁を揃える）
@@ -213,7 +217,7 @@ __all__ = [
     # モジュール
     "auto", "clean", "dates", "demo", "describe", "hd", "loading", "missing",
     "outliers",
-    "paths", "pipeline", "quality", "report", "schema", "splitting", "survival",
+    "paths", "pipeline", "quality", "report", "rerun", "schema", "splitting", "survival",
     "survival_input", "tac", "targets", "textfmt", "timing", "viz",
     # 列の役割とデータ品質監査
     "Schema", "ColumnSpec", "infer_column", "binary_output_name",

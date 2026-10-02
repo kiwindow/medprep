@@ -3,6 +3,37 @@
 このファイルは [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) の体裁に従い、
 バージョンは [セマンティック バージョニング](https://semver.org/lang/ja/) に従う。
 
+## [0.12.0] — 2026-10-03
+
+### 追加 — 直して再実行する・再現する
+「元データ ＋ schema.yaml ＋ medprep の版があれば前処理を完全に再現できる」は、0.11.x では
+言い過ぎだった。seed・test_size・date_col などが schema.yaml に残らず（ノートブックの
+RANDOM_STATE=42 を既定の 0 で再実行すると 5・6 が一致しない）、直した schema.yaml を
+autoprep に渡す口も無かった。0.12.0 で次の 4 点を入れて、この文を実態に合わせた。
+
+1. **schema.yaml に `run:` 欄**: autoprep に渡した設定（outcome・task・group・id_col・
+   survival・survival_dates・date_col・columns・table1_columns・test_size・seed・clean・
+   drop_empty_rows・do_split）と medprep の版を残す。引数の `policy` も `policy:` 欄に残す
+   （これまでは前処理に使うだけで schema.yaml には残らなかった）。
+2. **`autoprep(df, schema=...)`**: 保存した（直した）schema.yaml を使って再実行する。
+   - 列の役割の推定は変えず、推定のあとで schema.yaml の判断（role・action・timing・
+     dict_key・unit・order・value_map・duplicate_of）と policy で上書きする。
+     同じデータ・同じ版なら上書きは何も変えない。
+   - **schema.yaml の設定は引数より優先する。** 引数（既定値でないもの）と食い違えば
+     「人の確認が要る事項」に一覧で出す。使った設定、直した判断（推定と違うもの）、
+     keep にしても特徴量にならない列、schema.yaml とデータとで食い違う列も出す。
+   - role・action の書き間違いは、何が違うかを示して止まる。
+   - 0.11.x の schema.yaml（run 欄なし）も読む。目的変数・生存時間の列・ID・群は
+     schema.yaml から読み、seed などは引数の値を使い、その旨を出す。
+3. **`mp.reproduce(run)`**: `data/0_元データ.xlsx` と schema.yaml から再実行して次の
+   `run{N+1}` に保存し、0〜6 のファイル（全シート）・列の判断・設定・medprep の版が
+   元と一致するかを表にする（`rr.table`、`rr.identical`）。図と Table 1 は既定では作らない。
+4. **版ごとの目印（タグ `v0.x.y`）**: `model/medprep_version.txt` の 2 行目以降に、
+   同じ版を入れるコマンドを書く。
+
+ノートブック Preprocessing_Ver3_6: 環境変数 `SCHEMA_PATH` を追加（空なら全自動）。
+2. に直す手順と role の一覧、11. に再現の手順と `mp.reproduce` のセルを入れた。
+
 ## [0.11.3] — 2026-10-02
 
 ### 変更 — ノートブック Ver3_5 の部立てに合わせた
