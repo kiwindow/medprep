@@ -28,8 +28,6 @@
 
 from __future__ import annotations
 
-import contextlib
-import warnings
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -74,26 +72,16 @@ class MissingReport:
         print(self.report())
 
     def plot(self, df: pd.DataFrame, kind: str = "matrix", *, save: str | None = None,
-             figsize=(10, 5)):
-        """missingno による可視化。matrix / bar / heatmap / dendrogram。"""
-        with contextlib.suppress(ImportError):
-            import matplotlib_fontja  # noqa: F401
-        import matplotlib.pyplot as plt
-        import missingno as msno
-        fn = {"matrix": msno.matrix, "bar": msno.bar,
-              "heatmap": msno.heatmap, "dendrogram": msno.dendrogram}.get(kind)
-        if fn is None:
-            raise ValueError("kind は matrix / bar / heatmap / dendrogram のいずれか")
+             figsize=None):
+        """missingno による可視化。matrix / bar / heatmap / dendrogram。
+
+        ★レポートの「欠損の地図」と同じ描き方にする。★（0.11.2〜）
+        missingno の既定は列名を 45 度に傾けるので、列が多いと名前どうしが重なって読めなかった。
+        `viz.missing_map` は列名を縦（列の帯と平行）に置き、図の幅と字の大きさを列数から決める。
+        """
+        from .viz import missing_map
         cols = [c for c in self.columns["列"] if c in df.columns]
-        ax = fn(df[cols], figsize=figsize)
-        fig = ax.get_figure() if hasattr(ax, "get_figure") else plt.gcf()
-        # missingno の図は tight_layout と相性が悪い軸を持つ。警告を出させない。
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            fig.tight_layout()
-        if save:
-            fig.savefig(save, dpi=150, bbox_inches="tight")
-        return fig
+        return missing_map(df, columns=cols, kind=kind, save=save, figsize=figsize)
 
 
 # ================================================================== 分析

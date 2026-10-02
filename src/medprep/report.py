@@ -213,6 +213,9 @@ def build_report(
     figures: FigureSet | None = None,
     show_values: bool = False,
     attention: list | None = None,
+    survival_frame=None,
+    no_outcome=None,
+    horizon=None,
     path=None,
 ) -> Report:
     """手元にあるものを全部 1 枚にまとめる。**無いものは黙って飛ばす。**"""
@@ -232,9 +235,15 @@ def build_report(
         rep.headline = [_finding_dict(f, show_values) for f in audit.errors[:8]]
 
     s = rep.section("このレポートの読み方")
-    s.text("上から順に、<b>このデータで解析してよいか</b>（監査）→ "
-           "<b>列の役割</b>（schema）→ 欠損と外れ値 → 記述統計 → 生存時間 → "
-           "分割と前処理、と降りていく。", kind="html")
+    s.text("上から順に、<b>このデータで解析してよいか</b>（1. 監査）→ "
+           "<b>列の役割</b>（2.）→ 行と列の処理（3.）→ 書き出したデータ（4.）→ "
+           "欠損と外れ値（5.・6.）→ 記述統計（7.）→ 生存時間（8.）→ "
+           "分割と前処理（9.）→ 図（10.）→ 再現性（11.）、と降りていく。", kind="html")
+    s.text("<b>番号はノートブック（Preprocessing）の「第3部 結果の確認」と同じである。</b>"
+           "ここで気になった所は、ノートブックの同じ番号の節で、表を全部表示したり"
+           "計算をやり直したりして確かめられる。"
+           "ノートブックにだけある節（測定法の変更・透析前後・Kaplan-Meier と Cox など）は、"
+           "同じ番号の下の小節になっている。", kind="html")
     s.text("図はすべて同じ色体系で描いてある。"
            "<b>相関は発散配色（中点の灰色が「関連なし」）、関連の強さは順次配色（濃いほど強い）</b>。"
            "色覚特性のある読者のために、隣り合う色が区別できることを検証した配色を使い、"
@@ -258,22 +267,52 @@ def build_report(
             s.table(pd.DataFrame(audit.skipped, columns=["実施できなかった検査", "理由"]),
                     caption="実施できなかった検査")
 
+    # --- schema
+    if schema is not None:
+        s = rep.section("2. 列の役割（schema）")
+        s.text("<b>判断には必ず理由を付けてある。</b>"
+               "直したい場合は <code>schema.yaml</code> を編集して再実行する。", kind="html")
+        s.table(schema.to_frame(), caption="列の役割", max_rows=300)
+        if schema.unknown():
+            s.text(f"★役割を推定できなかった列: {schema.unknown()}")
+
     # --- 減らしたもの（★何を捨てたかを言わない自動化は信用してはならない★）
+    if (removed is not None and len(removed)) or (encoded is not None and len(encoded)):
+        s = rep.section("3. 行と列の処理（減らしたもの）")
     if removed is not None and len(removed):
-        s = rep.section("1b. 減らしたもの")
-        col = int((removed["種類"] == "列").sum())
-        row = int(removed.loc[removed["種類"] == "行", "件数"].sum())
-        val = int(removed.loc[removed["種類"] == "値", "件数"].sum())
-        s.text(f"<b>列 {col} 本を解析から外し、行 {row} 例に印を付け、"
-               f"値 {val} 個を NaN にした。</b>それぞれ理由を付けてある。", kind="html")
+        rrow = removed[removed["種類"] == "行"]
+        rcol = removed[removed["種類"] == "列"]
+        rval = removed[removed["種類"] == "値"]
+        s.text(f"<b>行 {int(rrow['件数'].sum())} 例に印を付け、列 {len(rcol)} 本を解析から外し、"
+               f"値 {int(rval['件数'].sum())} 個を NaN にした。</b>それぞれ理由を付けてある。",
+               kind="html")
+        s.text("3.1 行の処理", kind="h3")
         s.text("<b>★行は 1 つも削除していない。★</b> 削除すると症例数と並びが変わり、"
                "元のデータと症例ごとに axis=1 で結合し直せなくなる。"
-               "外すかどうかは <code>除外推奨</code> 列を見て人が決めること。", kind="html")
-        s.table(removed, caption="減らしたものの一覧", max_rows=300)
+               "外すかどうかは <code>除外推奨</code> 列を見て人が決めること"
+               "（全セルが空欄の行は <code>DROP_EMPTY_ROWS = True</code> のときだけ削除する）。",
+               kind="html")
+        if len(rrow):
+            s.table(rrow, caption="印を付けた行・削除した行")
+        else:
+            s.text("印を付けた行は無い。", kind="note")
+        s.text("3.2 列の処理", kind="h3")
+        s.text("解析から外した列（2_解析用データから消える）と、"
+               "残すが特徴量にしなかった列（ID・日付など）がある。「処置」の列で区別できる。",
+               kind="html")
+        if len(rcol):
+            s.table(rcol, caption="解析から外した列・特徴量にしなかった列", max_rows=300)
+        s.text("3.3 値の処理", kind="h3")
+        s.text("欠損コード（999 など）と、生理学的にあり得ない値を NaN にした。"
+               "行は残る。", kind="html")
+        if len(rval):
+            s.table(rval, caption="NaN にした値（列ごとの件数）", max_rows=300)
+        else:
+            s.text("NaN にした値は無い。", kind="note")
 
     # --- 二値の列
     if encoded is not None and len(encoded):
-        s = rep.section("1d. 二値の列を 0/1 に直した ―― 1 がどちらかを列名で示す")
+        s.text("3.4 二値の列を 0/1 に直した ―― 1 がどちらかを列名で示す", kind="h3")
         s.text("性別のように水準が 2 つの列は <b>0/1 の 1 本</b>にまとめる。"
                "問題は「列が何本になるか」ではなく <b>どちらの水準が 1 になるか</b>で、"
                "それを機械の都合（辞書順）で決めると、"
@@ -285,45 +324,53 @@ def build_report(
                "<u>人が元の記録と突き合わせる</u>ためのものなので、"
                "<code>男/女</code> のまま残してある。", kind="html")
 
-    # --- 書き出したデータ（★3 つの違いを最初に言う★）
+    # --- 書き出したデータ（★0〜6 の違いを最初に言う★）
     if outputs is not None and len(outputs):
-        s = rep.section("1c. 書き出したデータ ―― 3 つはどう違うのか")
-        s.text("同じデータを <b>3 段階</b>で書き出してある。"
-               "<b>施した処置が 1 段ずつ違う。</b>どれを使うかで結果が変わるので、"
+        s = rep.section("4. 書き出したデータ ―― 0〜6 の番号の付いたファイル")
+        s.text("同じデータを、<b>加工の度合いの順に 0〜6 の番号</b>を付けて "
+               "<code>data/</code> に書き出してある。どれを使うかで結果が変わるので、"
                "下の表で確かめること。", kind="html")
-        s.text("<b>掃除済み</b>は <u>人が読むため</u>のもの。元の記録と症例ごとに"
-               "突き合わせられるよう、ID も落とす予定の列も残してある。<br>"
-               "<b>解析用</b>は <u>自分で解析するため</u>のもの。解析に使わない列"
-               "（ID・重複列・自由記載）を除いてある。"
-               "<b>行は 1 つも減っていない</b>ので、元データと "
-               "<code>axis=1</code> で結合できる。<br>"
-               "<b>前処理済み</b>は <u>モデルに渡すため</u>のもの。"
-               "目的変数が欠測の症例を含まないので<b>行数が違う</b>。"
-               "元の行番号と ID を付けてあるので、あとから突き合わせられる。",
+        s.text("<b>0 元データ</b>は読み込んだそのまま。"
+               "<b>1 掃除済み</b>は <u>人が元の記録と照合するため</u>のもので、ID も自由記載も残す。"
+               "<b>2 解析用</b>は <u>自分で解析するため</u>のもので、使わない列を除くが ID は残し、"
+               "<b>行は 1 つも減らさない</b>（元データと <code>axis=1</code> で結合できる）。<br>"
+               "<b>3 機械学習用</b>は <u>回帰・分類のアプリに渡す</u>もの（目的変数がある行だけ。"
+               "分割・標準化・補完はしていない）。<b>4 生存時間用</b>は KM・log-rank・Cox に使う。"
+               "<b>5・6</b> はこのノートブックの中だけで使う training / test（補完・標準化済み）。",
                kind="html")
         s.table(outputs, caption="書き出したデータと、そこまでに施した処置",
                 max_rows=20)
         if run is not None:
             s.text(f"保存先: {run.run}", kind="note")
-
-    # --- schema
-    if schema is not None:
-        s = rep.section("2. 列の役割（schema）")
-        s.text("<b>判断には必ず理由を付けてある。</b>"
-               "直したい場合は <code>schema.yaml</code> を編集して再実行する。", kind="html")
-        s.table(schema.to_frame(), caption="列の役割", max_rows=300)
-        if schema.unknown():
-            s.text(f"★役割を推定できなかった列: {schema.unknown()}")
+        if no_outcome is not None and len(no_outcome):
+            s.text("4.1 目的変数がないため 3〜6 から除いた行", kind="h3")
+            s.text("これらの行は 1・2 には残っている。1 行ずつの一覧は "
+                   "<code>data/目的変数がないため削除した行.xlsx</code>。", kind="html")
+            cnt = (no_outcome.groupby(["理由", "除いたファイル"]).size()
+                   .reset_index(name="件数")
+                   if {"理由", "除いたファイル"} <= set(no_outcome.columns)
+                   else no_outcome["理由"].value_counts().rename_axis("理由").reset_index(name="件数"))
+            s.table(cnt, caption="理由ごとの件数")
+        if horizon is not None:
+            s.text("4.2 目的変数を自動で作った場合 ―― τ の決め方", kind="h3")
+            s.text(f"目的変数の指定が無いので <b>{_html.escape(str(horizon.name))}</b>"
+                   f"（τ 以内にイベントが起きたか）を作った。1 = {horizon.n1} 例、"
+                   f"0 = {horizon.n0} 例、判定できない（τ より前に打ち切り）= "
+                   f"{horizon.n_undetermined} 例。", kind="html")
+            if getattr(horizon, "reason", ""):
+                s.text(f"選んだ理由: {horizon.reason}", kind="note")
+            s.table(horizon.table, caption="τ の候補ごとの例数")
 
     # --- 欠損
     if missing is not None:
-        s = rep.section("3. 欠損")
+        s = rep.section("5. 欠損")
         s.text(f"欠損がまったく無い行 {missing.n_complete} / {missing.n_rows}"
                f"（{missing.complete_rate:.1%}）。")
         s.table(missing.columns, caption="列ごとの欠損")
         if len(missing.patterns):
             s.table(missing.patterns, caption="欠損パターン", max_rows=25)
         if len(missing.signals):
+            s.text("5.1 欠損と他の列の関連", kind="h3")
             s.text("★欠損が他の列と関連している（MCAR ではない）。"
                    "全体の中央値で埋めると群間差が人工的に作られる。")
             s.table(missing.signals, caption="欠損の偏り")
@@ -332,7 +379,7 @@ def build_report(
 
     # --- 外れ値
     if outliers is not None:
-        s = rep.section("4. 外れ値")
+        s = rep.section("6. 外れ値")
         s.text("<b>ここに出るのは「あり得るが極端」な値である。</b>"
                "生理学的にあり得ない値（Hb 0 など）は掃除の段で既に NaN にしてある。"
                "医学では外れ値こそが重要な症例でありうるので、既定では削除しない。",
@@ -346,7 +393,7 @@ def build_report(
 
     # --- 記述統計
     if gt is not None and gt.tables():
-        s = rep.section("5. Table 1 / Table 2 ―― 論文にそのまま載る形")
+        s = rep.section("7. Table 1 / Table 2 ―― 論文にそのまま載る形")
         s.text("<b>Table 1 は全症例の背景、Table 2 は群間比較。</b>"
                "Table 1 に p 値は載せない（背景を述べる表で検定はしない）。"
                "群分けの指定が無ければ Table 2 は作らない。<br>"
@@ -361,37 +408,53 @@ def build_report(
             s.text(t.to_html("ja"), kind="html")
         for n in gt.notes:
             s.text(f"注記: {n}", kind="note")
+    has7 = gt is not None and bool(gt.tables())
+    if not has7 and (table1 is not None or comparison is not None
+                     or (achievement is not None and len(achievement))):
+        s = rep.section("7. Table 1 / Table 2 ―― 論文にそのまま載る形")
     if table1 is not None:
-        s = rep.section("5a. Table 1（詳細版）")
+        s.text("7.1 Table 1（詳細版）", kind="h3")
         s.table(table1.table, caption="Table 1", max_rows=300)
         for n in table1.notes:
             s.text(f"注記: {n}", kind="note")
     if comparison is not None:
-        s = rep.section("5b. 群間比較の詳細")
+        s.text("7.2 群間比較の詳細", kind="h3")
         s.text("<b>どの検定をなぜ選んだかを「判定の根拠」列に残してある。</b>", kind="html")
         s.table(comparison.to_frame(), caption="群間比較", max_rows=200)
         ph = comparison.posthoc_frame()
         if len(ph):
             s.table(ph, caption="事後比較", max_rows=200)
     if achievement is not None and len(achievement):
-        s = rep.section("6. 管理目標の達成率")
+        s.text("7.3 管理目標の達成率", kind="h3")
         s.text("<b>境界値ちょうどの行に注意。</b>"
                "「5.5 未満」を <code>&lt;= 5.5</code> と書くと達成率が数ポイント動く。", kind="html")
         s.table(achievement, caption="管理目標の達成率", max_rows=200)
 
     # --- 生存時間
+    if survival_frame is not None and survival_summary is None:
+        survival_summary = survival_frame.summary()
     if survival_summary is not None or logrank is not None or cox is not None:
-        s = rep.section("7. 生存時間")
+        s = rep.section("8. 生存時間")
+        s.text("観察開始日・イベント発生日・打ち切り日から、観察期間（<code>duration</code>）と"
+               "イベント（<code>event</code>）を作った。"
+               "<b>Kaplan-Meier・log-rank・Cox はノートブックの 8. で行う</b>"
+               "（群の分け方と共変量は人が決めるため）。", kind="html")
         if survival_summary is not None:
             s.table(survival_summary, caption="生存時間の要約")
         if logrank is not None:
             s.pre(logrank.report())
         if cox is not None:
             s.pre(cox.report())
+        if survival_frame is not None and len(survival_frame.excluded):
+            s.table(survival_frame.excluded["理由"].value_counts()
+                    .rename_axis("理由").reset_index(name="件数"),
+                    caption="生存時間に変換できなかった症例（理由別。行は削除せず印を付けた）")
 
     # --- 分割と前処理
+    if split is not None or preprocessor is not None:
+        s = rep.section("9. 分割と前処理 ―― モデルに渡す行列")
     if split is not None:
-        s = rep.section("8. 分割")
+        s.text("9.1 分割", kind="h3")
         s.text(f"{split.strategy}：train {split.n_train} 例 / test {split.n_test} 例。")
         if len(split.balance):
             s.table(split.balance, caption="train と test の比較（SMD）")
@@ -400,7 +463,7 @@ def build_report(
         for n in split.notes:
             s.text(f"注記: {n}", kind="note")
     if preprocessor is not None:
-        s = rep.section("9. 前処理")
+        s.text("9.2 前処理（training だけで fit した変換）", kind="h3")
         s.pre(preprocessor.report())
         refs = preprocessor.reference_levels()
         if refs:
@@ -414,8 +477,9 @@ def build_report(
     # --- 図
     if figures is not None and len(figures):
         s = rep.section("10. 図")
-        for ttl, caption, fig in figures.figures:
-            s.text(ttl, kind="h3")
+        # ★小節番号はノートブックの 10. と同じ順に振る。★
+        for k, (ttl, caption, fig) in enumerate(figures.figures, 1):
+            s.text(f"10.{k} {ttl}", kind="h3")
             s.figure(fig, caption=caption, alt=ttl)
         if figures.skipped:
             s.table(pd.DataFrame(figures.skipped, columns=["描けなかった図", "理由"]),

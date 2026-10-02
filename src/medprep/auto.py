@@ -377,6 +377,13 @@ def autoprep(
             keep = [c for c in res.schema.features()
                     if c in dfc.columns and c not in survival_dates
                     and res.schema.columns[c].role != DATETIME]   # 日付は共変量ではない
+            # ★回帰・分類の目的変数に選んだ列も、生存時間の共変量としては使える。★（0.11.2〜）
+            #   features() は目的変数を含まないので、Alb を目的変数にすると 4_生存時間用データから
+            #   Alb が消え、ノートブックの「Alb の 2 群で KM」が KeyError で止まっていた。
+            #   （τ から自動で作る目的変数は 6.5 で作るので、ここにはまだ無い。リークにならない。）
+            tgt = (res.schema.target or {}).get("name")
+            if tgt and tgt in dfc.columns and tgt not in keep and tgt not in survival_dates:
+                keep.append(tgt)
             sf = build_survival(dfc, id_col=id_col, start_date=start,
                                 event_date=ev, censor_date=cens,
                                 covariates=keep, unit="years")
@@ -631,7 +638,8 @@ def _build_html(res: PrepResult, *, title=None, show_values=False, source="", **
         split=res.split,
         preprocessor=res.prepared.preprocessor if res.prepared else None,
         figures=res.figures, show_values=show_values,
-        attention=res.warnings, **kwargs)
+        attention=res.warnings, survival_frame=res.survival,
+        no_outcome=res.no_outcome_rows, horizon=res.horizon, **kwargs)
 
 
 def _open_run(res: PrepResult, *, method, project_folder, out_dir, source) -> None:
