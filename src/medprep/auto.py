@@ -12,8 +12,10 @@
 1. 受講者が層1で見た結果を、層2で 1 段ずつ分解して追体験できる。
    `autoprep` にしか無い処理があると、その追体験が途中で途切れる。
 2. **全自動は「決定の自動化」ではなく「決定の明示化」である。**
-   ここで下した判断はすべて `schema.yaml` と `rep.warnings` に残り、
-   人が直して再実行できる。
+   ここで下した判断はすべて `schema.yaml` と「人の確認が要る事項」に残り、
+   人が直して再実行できる。「人の確認が要る事項」（`rep.warnings`）は
+   `run{N}/report/人の確認が要る事項.txt`・`table/prep_tables.xlsx` の 1 枚目・
+   `prep_report.html` の「まず読むこと」の先頭の 3 か所に、同じ一覧を書き出す。
 
 止まるところと、止まらないところ
 --------------------------------
@@ -42,7 +44,7 @@ from .missing import drop_missing_outcome, mcar_signals
 from .outliers import detect as detect_outliers
 from .pipeline import encode_binary_columns, leak_check, prepare
 from .quality import audit
-from .report import build_report
+from .report import ATTENTION_TXT, build_report
 from .schema import (
     BINARY,
     DATETIME,
@@ -119,7 +121,8 @@ class PrepResult:
     df_surv: pd.DataFrame | None = None     # 4_生存時間用データ
     no_outcome_rows: pd.DataFrame | None = None  # 目的変数がないため 3〜6 から除いた行
     imputation: pd.DataFrame | None = None  # 5・6 で補完した列・欠損率・補完値
-    warnings: list = field(default_factory=list)
+    warnings: list = field(default_factory=list)   # 人の確認が要る事項（全文）
+    source: str = ""                               # 入力（ファイルのパス、または DataFrame）
     notes: list = field(default_factory=list)
     steps: list = field(default_factory=list)      # (段, 成否, 一言)
     saved: list = field(default_factory=list)
@@ -284,10 +287,12 @@ def autoprep(
     if isinstance(data, pd.DataFrame):
         res.df_raw = data.copy()
         source = "（渡された DataFrame）"
+        res.source = source
         step("読む", True, f"{len(data)} 行 × {data.shape[1]} 列")
     else:
         res.df_raw = read_any(data)
         source = res.df_raw.attrs.get("medprep_source", str(data))
+        res.source = str(source)
         for n in res.df_raw.attrs.get("medprep_read", []):
             step("読む", True, n)
             if "★" in n:
@@ -593,6 +598,8 @@ def autoprep(
                   "rep.show() で読むこと。空でないのがふつうである。★")
         else:
             print("人の確認が要る事項: なし")
+        if save and res.run is not None:
+            print(f"  （同じ一覧を {res.run.file('report', ATTENTION_TXT)} にも書き出した）")
     return res
 
 
@@ -623,7 +630,8 @@ def _build_html(res: PrepResult, *, title=None, show_values=False, source="", **
         achievement=res.achievement,
         split=res.split,
         preprocessor=res.prepared.preprocessor if res.prepared else None,
-        figures=res.figures, show_values=show_values, **kwargs)
+        figures=res.figures, show_values=show_values,
+        attention=res.warnings, **kwargs)
 
 
 def _open_run(res: PrepResult, *, method, project_folder, out_dir, source) -> None:
@@ -693,6 +701,11 @@ def _write_all(res: PrepResult, *, step, t0, save_data=True) -> None:
     # --- report/
     if res.html is not None:
         put(p.file("report", "prep_report.html"), res.html.to_html)
+        # ★「人の確認が要る事項」を、画面に流すだけで終わらせない。★
+        #   ノートブックを閉じれば rep.warnings は消える。HTML と同じ一覧を txt でも残す。
+        put(p.file("report", ATTENTION_TXT),
+            lambda q: res.html.to_attention_txt(
+                q, run=f"run{p.runnumber}", source=_source_name(res)))
 
     # ★キー名は既存ノートブックの LOG_CSV_COLUMNS と同じにする。★
     if res.log is not None:
@@ -705,6 +718,12 @@ def _write_all(res: PrepResult, *, step, t0, save_data=True) -> None:
         })
         res.saved.append(res.log.path)
     step("run フォルダに保存する", True, f"run{p.runnumber}  {p.run}")
+
+
+def _source_name(res: PrepResult) -> str:
+    """入力の名前。★フルパスは書かない。★ txt は人に渡ることがあり、パスに氏名が入りうる。"""
+    s = str(res.source or "")
+    return os.path.basename(s) if (os.sep in s or "/" in s) else s
 
 
 def _date_only(df: pd.DataFrame) -> pd.DataFrame:

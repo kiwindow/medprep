@@ -28,7 +28,7 @@
 ------
     import medprep as mp
 
-    # ---- 層1：全自動 1 行（判断はすべて schema.yaml と rep.warnings に残る）
+    # ---- 層1：全自動 1 行（判断はすべて schema.yaml と「人の確認が要る事項」に残る）
     rep = mp.autoprep("cohort.xlsx", outcome="eGFR_12m", task="regression",
                       group="施設", id_col="仮名ID", save=True)
     rep.show()                      # 段ごとの成否と「人の確認が要る事項」
@@ -80,7 +80,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.11.0"
+__version__ = "0.11.1"
 __author__ = "Kazuhiro Iwadoh"
 __license__ = "MIT"
 

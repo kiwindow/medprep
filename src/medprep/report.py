@@ -41,6 +41,17 @@ _ICON = {ERROR: "✗", WARN: "!", INFO: "·"}
 _LABEL = {ERROR: "致命的", WARN: "要確認", INFO: "記録"}
 _STATUS = {ERROR: PALETTE.critical, WARN: PALETTE.warning, INFO: PALETTE.muted}
 
+#: 「人の確認が要る事項」の名前。★HTML・Excel のシート・txt の 3 か所で同じ名前を使う。★
+#: 表に書く文字と探す文字を二か所に書くと、片方だけ直したときに黙って食い違う。
+ATTENTION = "人の確認が要る事項"
+ATTENTION_TXT = f"{ATTENTION}.txt"
+
+#: 症例の値を例として添えた部分（「（例: ['2021/13/45', …]）」）。
+#: レポートは既定で症例レベルの値を出さないので、ここだけ伏せる。
+#: ★リストの形のものだけを伏せる。★ 辞書の説明（「（例: 240 U/L → 80 U/L）」）は
+#: 症例の値ではなく、伏せると何の段差かが読めなくなる。
+_EXAMPLE_RE = re.compile(r"（例: \[[^\]]*\]）")
+
 
 # ================================================================== 部品
 @dataclass
@@ -78,6 +89,9 @@ class Report:
     show_values: bool = False
     counts: dict = field(default_factory=lambda: {ERROR: 0, WARN: 0, INFO: 0})
     headline: list = field(default_factory=list)      # 冒頭に出す所見
+    #: 人の確認が要る事項（`rep.warnings`）。None なら「まず読むこと」に載せない
+    #: （autoprep を通さずに build_report を呼んだとき）。空のリストなら「なし」と書く。
+    attention: list | None = None
 
     def section(self, title: str) -> Section:
         s = Section(title=title, anchor=_slug(title, len(self.sections)))
@@ -103,6 +117,7 @@ class Report:
             css=_CSS, body="".join(body),
             toc=[(s.anchor, s.title) for s in self.sections],
             counts=self.counts, headline=self.headline,
+            attention=self.attention, attention_title=ATTENTION,
             icon=_ICON, label=_LABEL, status=_STATUS,
             show_values=self.show_values,
             version=__version__,
@@ -119,6 +134,9 @@ class Report:
         """表だけを Excel にも出す。シートごとに分ける。"""
         sheets = dict(tables or {})
         if not sheets:
+            # ★1 枚目に置く。★ HTML の「まず読むこと」と同じ一覧を、同じ順で。
+            if self.attention is not None:
+                sheets[ATTENTION] = self.attention_frame()
             for s in self.sections:
                 for kind, payload in s.blocks:
                     if kind == "table":
@@ -128,6 +146,44 @@ class Report:
         with pd.ExcelWriter(path, engine="openpyxl") as w:
             for name, df in sheets.items():
                 df.to_excel(w, sheet_name=name[:31], index=False)
+                if name == ATTENTION:
+                    _fit_attention_sheet(w.sheets[name[:31]])
+        return path
+
+    def attention_frame(self) -> pd.DataFrame:
+        """「人の確認が要る事項」を表にしたもの（Excel の 1 枚目と同じ）。"""
+        items = list(self.attention or [])
+        if not items:
+            return pd.DataFrame({"番号": [""], "内容": ["なし"]})
+        return pd.DataFrame({"番号": range(1, len(items) + 1), "内容": items})
+
+    def attention_text(self, *, run: str = "", source: str = "") -> str:
+        """`report/人の確認が要る事項.txt` の中身。HTML と同じ一覧を、同じ順で。"""
+        items = list(self.attention or [])
+        lines = [f"■ {ATTENTION}",
+                 f"medprep {__version__}　{_dt.datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                 + (f"　{run}" if run else "")]
+        if source:
+            lines.append(f"入力: {source}")
+        lines.append("")
+        if not items:
+            lines.append("なし")
+        else:
+            lines.append(f"全 {len(items)} 件。空でないのがふつうである。"
+                         "1 件ずつ確かめ、必要なら schema.yaml や引数を直して再実行すること。")
+            lines.append("")
+            width = len(str(len(items)))
+            for i, t in enumerate(items, 1):
+                lines.append(f"{i:>{width}}. {t}")
+        if not self.show_values:
+            lines += ["", "※ 症例の値の例は伏せてある（show_values=True で作り直すと出る）。"
+                      "伏せていない全文は rep.warnings にある。"]
+        return "\n".join(lines) + "\n"
+
+    def to_attention_txt(self, path, **kwargs):
+        """txt に書く。★UTF-8（BOM 付き）・CRLF。★ Windows のメモ帳でも Mac でも文字化けしない。"""
+        with open(path, "w", encoding="utf-8-sig", newline="\r\n") as f:
+            f.write(self.attention_text(**kwargs))
         return path
 
 
@@ -156,11 +212,18 @@ def build_report(
     preprocessor=None,
     figures: FigureSet | None = None,
     show_values: bool = False,
+    attention: list | None = None,
     path=None,
 ) -> Report:
     """手元にあるものを全部 1 枚にまとめる。**無いものは黙って飛ばす。**"""
     rep = Report(title=title, subtitle=subtitle or _default_subtitle(df, schema),
                  show_values=show_values)
+
+    # --- 冒頭：人の確認が要る事項（★「まず読むこと」の一番上に置く★）
+    #   autoprep の `rep.warnings` をそのまま、同じ順で。HTML・Excel・txt で同じ一覧。
+    if attention is not None:
+        rep.attention = [str(t) if show_values else _EXAMPLE_RE.sub(
+            "（例は show_values=True で表示）", str(t)) for t in attention]
 
     # --- 冒頭：警告の要約（★ここを最初に置くことが目的である★）
     if audit is not None:
@@ -470,6 +533,22 @@ def _slug(title: str, i: int) -> str:
     return f"sec{i}-{base}" if base else f"sec{i}"
 
 
+def _fit_attention_sheet(ws) -> None:
+    """「人の確認が要る事項」のシートを読める幅にする。★文は折り返す。★
+
+    1 件が 100 文字を超えることがある。列幅を見出し（2 文字）で決めると、
+    画面の右へ流れて、印刷すると切れる。
+    """
+    from openpyxl.styles import Alignment
+
+    ws.column_dimensions["A"].width = 6
+    ws.column_dimensions["B"].width = 110
+    for row in ws.iter_rows(min_row=2):
+        row[0].alignment = Alignment(vertical="top", horizontal="right")
+        row[1].alignment = Alignment(vertical="top", wrap_text=True)
+    ws.freeze_panes = "A2"
+
+
 def _sheet_name(name: str, existing: dict) -> str:
     base = re.sub(r"[\\/*?:\[\]]", "", str(name))[:28] or "表"
     n, out = 1, base
@@ -560,6 +639,9 @@ pre {{ background: var(--plane); border: 1px solid var(--grid); border-radius: 6
        padding: 12px 14px; overflow-x: auto; font-size: 12.5px; line-height: 1.55;
        white-space: pre-wrap; }}
 p.note {{ font-size: 13px; color: var(--ink2); }}
+h3.att {{ font-size: 15px; margin: 14px 0 6px; }}
+ol.att {{ margin: 6px 0 12px; padding-left: 2.2em; }}
+ol.att li {{ margin: 4px 0; line-height: 1.6; overflow-wrap: anywhere; }}
 p.warn {{ font-size: 13.5px; color: #9a6b00; }}
 code {{ background: var(--grid); padding: 1px 5px; border-radius: 4px; font-size: 13px; }}
 footer {{ color: var(--muted); font-size: 12.5px; margin-top: 28px;
@@ -593,8 +675,19 @@ _TEMPLATE = """<!doctype html>
 </div>
 {% endif %}
 
-{% if headline %}
+{% if headline or attention is not none %}
 <section><h2>まず読むこと</h2>
+{% if attention is not none %}
+<h3 class="att">{{ attention_title }}{% if attention %}（{{ attention|length }} 件）{% endif %}</h3>
+{% if attention %}
+<p class="note">空でないのがふつうである。1 件ずつ確かめ、必要なら schema.yaml や引数を直して再実行すること。
+同じ一覧が <code>report/{{ attention_title }}.txt</code> と <code>table/prep_tables.xlsx</code> の 1 枚目にもある。</p>
+<ol class="att">{% for t in attention %}<li>{{ t }}</li>{% endfor %}</ol>
+{% else %}
+<p>なし</p>
+{% endif %}
+{% if headline %}<h3 class="att">監査の致命的な所見（詳しく）</h3>{% endif %}
+{% endif %}
 {% for f in headline %}
   <div class="finding {{ f.severity }}">
     <div class="fhead"><span class="ficon">{{ icon[f.severity] }}</span>
