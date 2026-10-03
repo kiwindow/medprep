@@ -206,7 +206,9 @@ def smd_categorical(a: pd.Series, b: pd.Series) -> float:
     s = (cov(p1) + cov(p2)) / 2
     d = (p1 - p2).reshape(-1, 1)
     try:
-        v = float(d.T @ np.linalg.pinv(s) @ d)
+        # d.T @ S⁺ @ d は 1×1 の行列。float() で数値にするのは NumPy 2.5 から TypeError
+        # （1.25 から非推奨）なので、.item() で取り出す。
+        v = (d.T @ np.linalg.pinv(s) @ d).item()
     except np.linalg.LinAlgError:
         return float("nan")
     return float(np.sqrt(max(v, 0.0)))

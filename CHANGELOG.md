@@ -3,6 +3,18 @@
 このファイルは [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) の体裁に従い、
 バージョンは [セマンティック バージョニング](https://semver.org/lang/ja/) に従う。
 
+## [0.12.1] — 2026-10-04
+
+### 修正 — NumPy 2.5 で train / test に分けるところで止まる
+- NumPy 2.5 の環境（SetupLab で作った ~/lab など）で `autoprep` が目的変数ありで分割に進むと、
+  `TypeError: only 0-dimensional arrays can be converted to Python scalars` で止まっていた。
+  カテゴリ変数の SMD（`describe.smd_categorical`、多水準の標準化差）で 1×1 の行列を `float()` で
+  数値にしており、これが NumPy 1.25 から非推奨、2.5 から TypeError になったため。
+  Colab（NumPy 2.5 より前）では警告だけで動いていたので気付かなかった。
+- `.item()` で取り出すように直した。値は変わらない。
+- 既存のテスト（train / test のバランス表・人の確認が要る事項など）が NumPy 2.5 でこの箇所を通るので、
+  それで確認した。同じ書き方（行列を `float()` にする）は他に無い。
+
 ## [0.12.0] — 2026-10-03
 
 ### 追加 — 直して再実行する・再現する
