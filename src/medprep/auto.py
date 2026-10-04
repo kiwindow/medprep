@@ -736,9 +736,17 @@ def _write_all(res: PrepResult, *, step, t0, save_data=True) -> None:
     if res.table1 is not None:
         put(p.file("table", "table1_詳細.xlsx"), res.table1.to_excel)
     if res.gt is not None:
-        # ★sheet1 = 日本語 / sheet2 = 英語、Word はページを分けて日英。★
-        put(p.file("table", "Table1_2.xlsx"), res.gt.to_excel)
-        put(p.file("table", "Table1_2.docx"), res.gt.to_docx)
+        # ★Table 1 と Table 2 は別のファイルにする（0.12.3〜。以前は Table1_2 に 2 枚を並べていた）。★
+        #   論文では表ごとに別のファイルで扱うことが多く、1 つのファイルだと Finder の
+        #   プレビュー（1 ページ目だけ）で Table 2 が無いように見えた。
+        #   各ファイルの中は、Excel = sheet1 日本語 / sheet2 英語、Word = ページを分けて日英。
+        for which, name in (("table1", "Table1"), ("table2", "Table2")):
+            if getattr(res.gt, which) is None:
+                continue                      # GROUP を選ばなければ Table 2 は無い
+            put(p.file("table", f"{name}.xlsx"),
+                lambda q, w=which: res.gt.to_excel(q, which=w))
+            put(p.file("table", f"{name}.docx"),
+                lambda q, w=which: res.gt.to_docx(q, which=w))
     if res.removed is not None:
         put(p.file("table", "除外の記録.xlsx"), _removed_book(res))
     if res.outputs is not None:

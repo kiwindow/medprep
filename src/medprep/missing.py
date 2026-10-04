@@ -115,7 +115,9 @@ def analyze(
             "型": ("数値" if pd.api.types.is_numeric_dtype(df[c]) else "カテゴリ"),
             "水準/範囲": _range_text(df[c]),
         })
-    rep.columns = pd.DataFrame(rows).sort_values("欠損", ascending=False)
+    # ★安定ソート（0.12.3）。★ 既定の quicksort は欠損数が同じ列どうしの順が機械によって
+    #   入れ替わる（Mac と Linux で Alb と iCa×P が逆になった）。同じ数なら元の列の順に並べる。
+    rep.columns = pd.DataFrame(rows).sort_values("欠損", ascending=False, kind="mergesort")
 
     rowmiss = na.sum(axis=1)
     rep.rows = (pd.DataFrame({"欠損している列数": rowmiss.value_counts().sort_index().index,
@@ -209,7 +211,7 @@ def mcar_signals(df: pd.DataFrame, columns: list | None = None, *,
                         continue
                     chi2, p, _dof, _e = stats.chi2_contingency(t)
                     stat, test = float(chi2), "χ²"
-                    rate = m.groupby(s.astype(str)).mean().sort_values(ascending=False)
+                    rate = m.groupby(s.astype(str)).mean().sort_values(ascending=False, kind="mergesort")
                     detail = "、".join(f"{k}={v:.0%}" for k, v in rate.head(4).items())
             except Exception:                                      # noqa: BLE001
                 continue

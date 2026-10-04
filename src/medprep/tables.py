@@ -189,8 +189,14 @@ class GTSummary:
     group: str | None = None
     notes: list = field(default_factory=list)
 
-    def tables(self) -> list:
-        return [t for t in (self.table1, self.table2) if t is not None]
+    def tables(self, which=None) -> list:
+        """表の一覧。`which` に "table1" / "table2" を渡すと、その 1 枚だけ。"""
+        ts = [t for t in (self.table1, self.table2) if t is not None]
+        if which is None:
+            return ts
+        if which not in ("table1", "table2"):
+            raise ValueError(f'which は "table1" か "table2"（または None で両方）: {which!r}')
+        return [t for t in ts if t.kind == which]
 
     def report(self, lang: str = "ja") -> str:
         return "\n\n".join(t.text(lang) for t in self.tables())
@@ -199,8 +205,12 @@ class GTSummary:
         return "\n".join(t.to_html(lang) for t in self.tables())
 
     # ---------------------------------------------------------- Excel
-    def to_excel(self, path) -> str:
-        """★sheet1 = 日本語版、sheet2 = 英語版。★ 配置は中詰め。"""
+    def to_excel(self, path, which=None) -> str:
+        """★sheet1 = 日本語版、sheet2 = 英語版。★ 配置は中詰め。
+
+        `which="table1"` / `"table2"` でその表だけのファイルにする（0.12.3〜、
+        autoprep は Table1.xlsx と Table2.xlsx を別々に書き出す）。None なら両方を縦に並べる。
+        """
         from openpyxl import Workbook
         from openpyxl.styles import Alignment, Border, Font, Side
 
@@ -214,7 +224,7 @@ class GTSummary:
             ws = wb.active if i == 0 else wb.create_sheet()
             ws.title = sheet
             r = 1
-            for t in self.tables():
+            for t in self.tables(which):
                 f = t.frame(lang)
                 ws.cell(r, 1, t.title(lang)).font = Font(bold=True, size=11)
                 ws.cell(r, 1).alignment = centre
@@ -248,8 +258,10 @@ class GTSummary:
         return str(path)
 
     # ---------------------------------------------------------- Word
-    def to_docx(self, path, *, landscape_from: int = 4) -> str:
+    def to_docx(self, path, which=None, *, landscape_from: int = 4) -> str:
         """★日本語版と英語版をページを分けて載せる。★ 表は中詰め。
+
+        `which="table1"` / `"table2"` でその表だけのファイルにする（0.12.3〜）。
 
         群が増えると Table 2 は横に伸びる。縦置きのままだとセルの中で
         「57.3 ± 10.6 [30.0, 88.3]」が 3 行に折り返して読めなくなるので、
@@ -264,7 +276,7 @@ class GTSummary:
         doc = Document()
         first = True
         for lang in ("ja", "en"):
-            for t in self.tables():
+            for t in self.tables(which):
                 f = t.frame(lang)
                 wide = f.shape[1] > landscape_from
                 sec = doc.sections[0] if first else doc.add_section(WD_SECTION.NEW_PAGE)

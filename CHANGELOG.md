@@ -3,6 +3,29 @@
 このファイルは [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) の体裁に従い、
 バージョンは [セマンティック バージョニング](https://semver.org/lang/ja/) に従う。
 
+## [0.12.3] — 2026-10-04
+
+### 変更 — Table 1 と Table 2 を別のファイルに書き出す
+- `autoprep(save=True)` は、これまで `run{N}/table/Table1_2.xlsx`・`Table1_2.docx` に Table 1 と Table 2 を
+  並べて書いていた。Word では Table 2 が 2 ページ目から始まるため、Finder のプレビュー（1 ページ目だけ）で
+  Table 2 が無いように見えた（halddata.xlsx、目的変数 LongOpeTime = GROUP で確認）。
+- **表ごとに別のファイル**にした。
+  - `Table1.xlsx`・`Table1.docx` … 全症例の背景
+  - `Table2.xlsx`・`Table2.docx` … GROUP 別の比較（GROUP を選んだときだけ）
+  - 各ファイルの中はこれまでどおり（Excel は 1 枚目が日本語・2 枚目が英語、Word は日本語と英語をページを分けて）。
+  - `Table1_2.*` は書き出さない。`table1_詳細.xlsx` はこれまでどおり。
+- `GTSummary.to_excel(path, which=None)`・`to_docx(path, which=None)`: `which="table1"` / `"table2"` で
+  その表だけのファイルにする。`None`（既定）は従来どおり 2 枚を並べる。それ以外の値は ValueError。
+
+### 修正 — 欠損の一覧で、欠損数が同じ列の並び順が機械によって変わる
+- `missing.analyze` の列ごとの一覧（ノートブック 5.）を欠損数の多い順に並べるとき、既定の quicksort は
+  同じ数どうしの順を保たず、Mac とコンテナで Alb と iCa×P（49 件）・event と _start（22 件）の順が逆になった。
+  安定ソート（mergesort）にし、**同じ数なら元の列の順**に並ぶようにした。群ごとの欠損率の並びも同じ。
+  数値・書き出すデータ・`mp.reproduce` の照合には影響しない（見た目の順だけ）。
+
+### テスト
+- tests/test_tables_split_v0123.py（7 件）を追加。
+
 ## [0.12.2] — 2026-10-04
 
 ### 修正 — ローカル PC で 8.1 の KM 曲線が止まる（at-risk 表）
