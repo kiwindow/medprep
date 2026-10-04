@@ -828,6 +828,11 @@ def _decimals(v) -> int:
 ROW_DROPPED = "★削除した（行が消える）★"
 
 
+def _is_text(s: pd.Series) -> bool:
+    """文字列が入りうる列か（object 型、または pandas 3 の str 型）。"""
+    return pd.api.types.is_object_dtype(s) or pd.api.types.is_string_dtype(s)
+
+
 def _blank_mask(df: pd.DataFrame) -> pd.DataFrame:
     """セルが空かどうか。★空白だけの文字列も空とみなす。★
 
@@ -836,7 +841,9 @@ def _blank_mask(df: pd.DataFrame) -> pd.DataFrame:
     """
     m = df.isna()
     for c in df.columns:
-        if df[c].dtype == object:
+        # ★pandas 3 では文字列の列の型が object ではなく str になる。★
+        #   `dtype == object` だけで見ると、文字列の列の '' や全角空白を見落とす。
+        if _is_text(df[c]):
             m[c] = m[c] | df[c].map(
                 lambda v: isinstance(v, str) and not v.strip().strip("\u3000"))
     return m

@@ -293,7 +293,10 @@ class Survival:
         ax.legend(loc="lower left", fontsize=9)
         ax.set_title(title or ("Kaplan-Meier 曲線" if by is None else f"{by} 別の生存曲線"))
         if at_risk and len(fitters):
-            from lifelines.plotting import add_at_risk_counts
+            # ★lifelines の add_at_risk_counts は使わない。★ 0.30.2 以前は
+            #   NumPy 2.4 以降で TypeError になり、図が作れずに止まる。
+            #   0.30.3 の同じ関数を medprep に写したもの（_at_risk.py）を使う。
+            from ._at_risk import add_at_risk_counts
             add_at_risk_counts(*fitters.values(), ax=ax,
                                rows_to_show=list(at_risk_rows))
         if fig is not None:

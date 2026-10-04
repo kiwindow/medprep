@@ -3,6 +3,40 @@
 このファイルは [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) の体裁に従い、
 バージョンは [セマンティック バージョニング](https://semver.org/lang/ja/) に従う。
 
+## [0.12.2] — 2026-10-04
+
+### 修正 — ローカル PC で 8.1 の KM 曲線が止まる（at-risk 表）
+- SetupLab で作った ~/lab（lifelines 0.30.0・NumPy 2.4.6 を uv.lock で固定）で `Survival.km` を呼ぶと、
+  `TypeError: only 0-dimensional arrays can be converted to Python scalars` で止まっていた
+  （ノートブック 8.1 の Kaplan-Meier 曲線）。
+  lifelines 0.30.2 以前の `lifelines.plotting.add_at_risk_counts` が長さ 1 の配列を `int()` に渡しており、
+  これが NumPy 2.4 から TypeError になったため。lifelines 0.30.3 で直っている。
+  Colab は NumPy 2.4 より前なので動いていた。
+- 受講者の lifelines の版は medprep からは決められないので、0.30.3 の `add_at_risk_counts` を
+  `medprep/_at_risk.py` に写し（MIT、出典とライセンスを明記）、`Survival.km` はそちらを使うようにした。
+  **lifelines の版に関係なく、Colab でもローカルでも同じ at-risk 表になる**
+  （lifelines 0.30.3 の表と文字列まで一致することをテストで確かめた）。
+  `at_risk_rows` の書き間違いは assert ではなく、何が使えるかを言う ValueError にした。
+
+### 修正 — pandas 3 で文字列の列を見落とす 2 か所
+pandas 3 では文字列だけの列の型が object ではなく str（StringDtype）になる。`dtype == object` で
+判定していた次の 2 か所が、文字列の列を素通りしていた（~/lab は pandas 3.0.6）。
+- 全セルが空欄の行の判定: str 型の列の `''` や全角空白を空と数えず、空行を見落とした
+  （`drop_empty_rows=True` でも消えない・既定の「n 行ある」の数が少ない）。
+- 辞書で掃除するときの欠損表記（「未測定」など）: str 型の列では NaN にした記録が残らなかった
+  （値は数値化の段で NaN になっていたので、結果の数値は変わらない）。
+object 型と str 型の両方を文字列の列として扱うようにした。
+
+### テスト
+- tests/test_at_risk_v0122.py（6 件）・tests/test_pandas3_str_v0122.py（2 件）を追加。
+- 既存テストのうち、テスト側のデータ作成（空文字の列に日付を代入する・dtype を object と比べる）が
+  pandas 3 で通らなかったものを、pandas 2 / 3 の両方で通る書き方に直した（medprep 本体の挙動は不変）。
+- ~/lab と同じ版（Python 3.12・pandas 3.0.6・NumPy 2.4.6・lifelines 0.30.0）と、
+  Colab に近い版（pandas 2.2.2・NumPy 2.0.2・lifelines 0.30.3）の両方で全テスト rc=0。
+
+### 0.12.1 の記録の訂正
+- 0.12.1 の「NumPy 2.5 から TypeError」は、正しくは **NumPy 2.4 から**（2.4.6 で同じ TypeError になる）。
+
 ## [0.12.1] — 2026-10-04
 
 ### 修正 — NumPy 2.5 で train / test に分けるところで止まる

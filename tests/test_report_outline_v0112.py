@@ -41,7 +41,7 @@ def _frame(n=240):
     base = pd.Timestamp("2015-01-01")
     df["開始日"] = base + pd.to_timedelta(rng.integers(0, 500, n), "D")
     df["発生日"] = df["開始日"] + pd.to_timedelta(rng.integers(30, 900, n), "D")
-    df["打切日"] = ""
+    df["打切日"] = pd.Series([""] * len(df), index=df.index, dtype=object)  # pandas 3 でも日付を代入できる
     df.loc[df.index[::2], "発生日"] = ""
     df.loc[df.index[::2], "打切日"] = df.loc[df.index[::2], "開始日"] + pd.Timedelta(days=700)
     return df

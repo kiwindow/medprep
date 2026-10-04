@@ -180,7 +180,8 @@ def clean_numeric(
 
         # --- テキスト欠損表記を先に NaN にする
         s = out[col]
-        if s.dtype == object:
+        # ★pandas 3 では文字列の列が object ではなく str 型になる。両方を見る。★
+        if pd.api.types.is_object_dtype(s) or pd.api.types.is_string_dtype(s):
             mask_txt = s.map(lambda v: _norm(v) in texts if isinstance(v, str) else False)
             if mask_txt.any():
                 s = s.mask(mask_txt)

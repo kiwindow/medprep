@@ -231,7 +231,7 @@ def test_the_survival_frame_carries_the_covariates():
     base = pd.Timestamp("2015-01-01")
     df["開始日"] = base + pd.to_timedelta(rng.integers(0, 500, len(df)), "D")
     df["発生日"] = df["開始日"] + pd.to_timedelta(rng.integers(30, 900, len(df)), "D")
-    df["打切日"] = ""
+    df["打切日"] = pd.Series([""] * len(df), index=df.index, dtype=object)  # pandas 3 でも日付を代入できる
     df.loc[df.index[::2], ["発生日"]] = ""
     df.loc[df.index[::2], "打切日"] = (
         df.loc[df.index[::2], "開始日"] + pd.Timedelta(days=700))
@@ -246,7 +246,7 @@ def _survival_frame(n=200):
     base = pd.Timestamp("2015-01-01")
     df["開始日"] = base + pd.to_timedelta(rng.integers(0, 500, len(df)), "D")
     df["発生日"] = df["開始日"] + pd.to_timedelta(rng.integers(30, 900, len(df)), "D")
-    df["打切日"] = ""
+    df["打切日"] = pd.Series([""] * len(df), index=df.index, dtype=object)  # pandas 3 でも日付を代入できる
     df.loc[df.index[::2], "発生日"] = ""
     df.loc[df.index[::2], "打切日"] = (
         df.loc[df.index[::2], "開始日"] + pd.Timedelta(days=700))
@@ -417,7 +417,9 @@ def test_an_ambiguous_date_column_is_left_alone():
     df = frame(60)
     df["検査日"] = ["3/4/15", "5/6/15", "7/8/15", "2/1/15"] * 15
     rep = run(df, date_col="検査日")
-    assert rep.df_clean["検査日"].dtype == object          # 書き換えていない
+    # 書き換えていない（pandas 3 では文字列の dtype が object ではなく str になる）
+    assert not pd.api.types.is_datetime64_any_dtype(rep.df_clean["検査日"])
+    assert rep.df_clean["検査日"].tolist() == df["検査日"].tolist()
     assert any("順序が決まらない" in w for w in rep.warnings)
 
 
@@ -425,7 +427,8 @@ def test_a_column_that_is_not_a_date_is_left_alone():
     df = frame(60)
     df["メモ"] = ["特記なし"] * 60
     rep = run(df, date_col="メモ")
-    assert rep.df_clean["メモ"].dtype == object
+    assert not pd.api.types.is_datetime64_any_dtype(rep.df_clean["メモ"])
+    assert rep.df_clean["メモ"].tolist() == df["メモ"].tolist()
 
 
 def test_parsed_dates_reach_the_saved_file(isolated):

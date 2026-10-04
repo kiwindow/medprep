@@ -5,6 +5,20 @@
 
 ---
 
+## KM 曲線の at-risk 表は lifelines の関数を写して持つ（0.12.2）
+
+lifelines 0.30.2 以前の `add_at_risk_counts` は NumPy 2.4 以降で TypeError になる。
+次の道を比べ、**0.30.3 の関数を medprep に写す**ことにした。
+
+- 依存を `lifelines>=0.30.3` に上げる: SetupLab の ~/lab は uv.lock で 0.30.0 を固定しており、
+  Update_medprep で入れても `uv sync` で戻りうる。受講者の環境は medprep からは決められない
+- TypeError を捕まえて表を省く: 図は出るが、at-risk 表は論文の KM 曲線に必須（KMunicate）
+- lifelines の内部（モジュールの `int`）を差し替える: 動くが、lifelines の版が変わると壊れうる
+- 写す: 約 100 行。lifelines の版に関係なく同じ表になる。MIT なので出典とライセンスを残せばよい。
+  0.30.3 の表と文字列まで一致することをテストで確かめている
+
+---
+
 ## schema.yaml を渡したら、引数より schema.yaml を優先する（0.12.0）
 
 `autoprep(df, schema=...)` で、schema.yaml の設定（run 欄）とノートブックの環境変数が
