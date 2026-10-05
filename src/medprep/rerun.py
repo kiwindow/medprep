@@ -48,7 +48,8 @@ VALID_ROLES = {ID, OUTCOME, TIME, EVENT, GROUP, DATETIME, NUMERIC, BINARY, ORDIN
 #: keep にしたとき特徴量になる役割（それ以外は keep にしても前処理の段で外れる）
 FEATURE_ROLES = {NUMERIC, ORDINAL, BINARY, NOMINAL, GROUP}
 #: 人が直してよい（＝上書きする）項目。欠損率・水準数などデータから決まるものは上書きしない
-EDITABLE = ("role", "action", "timing", "dict_key", "unit", "order", "value_map", "duplicate_of")
+EDITABLE = ("role", "action", "timing", "dict_key", "unit", "order", "value_map", "duplicate_of",
+            "plausible")
 
 #: `run:` 欄に残す autoprep の設定と、その既定値（★autoprep の既定と同じにすること★）
 RUN_DEFAULTS = {

@@ -7,6 +7,9 @@
   （`dict/ranges_ja.yaml` の `plausible`）が担い、`clean.py` が先に処理している。
 
   ここで扱うのは「生理学的にはあり得るが、この集団の中では極端」な値である。
+  （0.13.0〜）ただし辞書に無い列では、入力ミスも素通りしてここまで来る。
+  そこで `suspect_entry_errors` が、ほかの値から**桁違いに**離れた値を
+  「入力ミスの可能性がある値」として人に返す（直すのは人。ここでは直さない）。
   CRP 28 mg/dL は入力ミスではない。敗血症の症例である。
   **削除してはならない。** 医学では外れ値こそが重要な症例でありうる。
 
@@ -39,11 +42,18 @@ import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
 
+from .clean import excel_row as _excel_row
 from .describe import group_levels
 from .schema import NUMERIC, Schema
 from .textfmt import frame_text
 
 IQR, MAD, QUANTILE = "iqr", "mad", "quantile"
+
+#: 入力ミスの可能性がある値の既定（0.13.0〜）。schema.yaml の policy の entry_error で変えられる。
+#:   z     : ロバスト z（中央値からの距離を MAD で測ったもの）がこれ以上
+#:   ratio : しかも、その次に極端な値の z の ratio 倍以上離れている
+ENTRY_Z = 10.0
+ENTRY_RATIO = 3.0
 FLAG, WINSORIZE, NAN, DROP = "flag", "winsorize", "nan", "drop"
 
 
@@ -175,6 +185,8 @@ class OutlierReport:
     flags: pd.DataFrame = field(default_factory=pd.DataFrame)   # 列ごとの真偽値
     multivariate: pd.DataFrame = field(default_factory=pd.DataFrame)
     notes: list = field(default_factory=list)
+    #: 入力ミスの可能性がある値（0.13.0〜）。`suspect_entry_errors` の表
+    suspects: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     @property
     def n_flagged_rows(self) -> int:
@@ -187,6 +199,9 @@ class OutlierReport:
             lines.append(f"\nいずれかの列で外れ値と判定された症例: {self.n_flagged_rows} 例")
         if len(self.multivariate):
             lines += ["\n多変量の外れ値:", frame_text(self.multivariate)]
+        if len(self.suspects):
+            lines += ["\n★入力ミスの可能性がある値★（ほかの値から桁違いに離れている）:",
+                      frame_text(self.suspects)]
         for n in self.notes:
             lines.append(f"[注記] {n}")
         return "\n".join(lines)
@@ -206,11 +221,16 @@ def detect(
     by: str | None = None,
     id_col: str | None = None,
     max_examples: int = 10,
+    entry_z: float = ENTRY_Z,
+    entry_ratio: float = ENTRY_RATIO,
 ) -> OutlierReport:
     """外れ値を検出する。**この関数はデータを変更しない。**
 
     `by` を渡すと群ごとに閾値を作る（施設差がある指標で、全体の閾値では
     小さい施設の値が丸ごと外れ値になるのを避けるため）。
+
+    `entry_z` / `entry_ratio` は「入力ミスの可能性がある値」の判定に使う（0.13.0〜、
+    `suspect_entry_errors` を参照）。結果は `rep.suspects` に入る。
     """
     cols = _numeric_columns(df, schema, columns)
     rep = OutlierReport(method=method, action=FLAG)
@@ -248,6 +268,8 @@ def detect(
         })
     rep.table = pd.DataFrame(rows)
     rep.flags = flags
+    rep.suspects = suspect_entry_errors(df, schema, columns, z=entry_z,
+                                        ratio=entry_ratio, id_col=id_col)
 
     # ★外れ値が多すぎる列は、外れ値ではなく歪んだ分布である。★
     #   正規分布なら IQR 1.5 倍の外は 0.5% ほどしか出ない。5% を超えるようなら、
@@ -262,11 +284,147 @@ def detect(
     if by:
         rep.notes.append(f"閾値は '{by}' の群ごとに作った。"
                          f"全体の閾値だと、水準の違う群の値がまとめて外れ値になる")
+    if len(rep.suspects):
+        rep.notes.append(
+            f"★入力ミスの可能性がある値が {len(rep.suspects)} 個ある★"
+            f"（列 {list(dict.fromkeys(rep.suspects['列']))}）。"
+            "ほかの値から桁違いに離れているので、IQR の印とは分けて rep.suspects に出した。"
+            "誤りなら schema.yaml の列に plausible: [下限, 上限] を書いて再実行する"
+            "（範囲の外は NaN にして補完へ回す。winsorize で丸めない）")
     rep.notes.append(
         "★生理学的にあり得ない値（Hb 0 など）はここには出ない。★ "
-        "clean_numeric が先に NaN にしている。ここに出るのは"
+        "clean_numeric が先に NaN にしている（辞書に載っている列だけ）。ここに出るのは"
         "『あり得るが極端』な値であり、削除してはならない症例を含む")
     return rep
+
+
+# ================================================================== 入力ミスの可能性（0.13.0〜）
+def robust_z(x) -> pd.Series:
+    """中央値と MAD によるロバスト z（= (x − 中央値) / (1.4826 × MAD)）。
+
+    平均と標準偏差で測る z は、測りたい外れ値そのものに引きずられる
+    （230 が 1 つ入るだけで標準偏差が 10 倍になり、230 の z が小さく見える）。
+    中央値と MAD は 1 つの外れ値ではほとんど動かない。
+
+    **MAD が 0 になる列がある**（半数以上が同じ値）。その場合は平均絶対偏差で代える。
+    それも 0 なら（ほぼ定数の列）全例 NaN を返す。
+    """
+    v = pd.to_numeric(pd.Series(x), errors="coerce")
+    d = v.dropna()
+    nan = pd.Series(np.nan, index=v.index)
+    if len(d) < 4:
+        return nan
+    med = float(d.median())
+    scale = float((d - med).abs().median()) * 1.4826
+    if scale <= 0:
+        scale = float((d - med).abs().mean()) * 1.2533
+    if scale <= 0:
+        return nan
+    return (v - med) / scale
+
+
+def suspect_entry_errors(
+    df: pd.DataFrame,
+    schema: Schema | None = None,
+    columns: list | None = None,
+    *,
+    z: float = ENTRY_Z,
+    ratio: float = ENTRY_RATIO,
+    id_col: str | None = None,
+    min_unique: int = 10,
+    max_k: int | None = None,
+) -> pd.DataFrame:
+    """**入力ミスの可能性がある値**を挙げる。データは変更しない。
+
+    判定（列ごと、上側と下側それぞれ）
+    --------------------------------
+    1. ロバスト z（`robust_z`）が `z`（既定 10）以上
+    2. しかも、その次に極端な値の z の `ratio`（既定 3）倍以上離れている
+
+    1 だけでは足りない。右に裾の長い列（人口・CRP）では、実在する大きな値も
+    z が 10 を超える。**本物の極端値は「なだらかに」並ぶ**（9842, 7651, 6675, …）が、
+    桁の打ち間違いや 999 のような欠損コードは**ほかの値から飛び離れる**。2 はその差を見る。
+
+    同じ誤りが 2 つ以上ある（999 が 2 例）と、1 番目と 2 番目は離れていない。
+    そこで上位 k 個（k ≤ max(1, min(5, 1% の例数))）をまとめて見て、
+    「上位 k 個の後ろに大きな切れ目がある」なら k 個とも挙げる。
+
+    辞書に載っている列は、生理学的にあり得ない値が掃除の段で既に NaN になっている。
+    残っているのは「あり得る範囲の中で飛び離れた値」なので、同じ基準で見てよい。
+
+    返す表の列: 列 / Excel の行 / ID / 値 / ロバスト z / 次の値 / 次の z / 中央値 / 向き
+    """
+    cols = _numeric_columns(df, schema, columns)
+    out_cols = ["列", "Excel の行", "ID", "値", "ロバスト z", "次の値", "次の z", "中央値", "向き"]
+    rows = []
+    for c in cols:
+        v = pd.to_numeric(df[c], errors="coerce")
+        if v.nunique(dropna=True) < min_unique:
+            continue                       # コード値・少数の水準しかない列は対象外
+        rz = robust_z(v)
+        if rz.isna().all():
+            continue
+        n = int(v.notna().sum())
+        kmax = max_k or max(1, min(5, int(np.ceil(0.01 * n))))
+        med = float(v.median())
+        for sign, side in ((1, "大きい側"), (-1, "小さい側")):
+            s = (sign * rz).dropna()
+            s = s[s > 0].sort_values(ascending=False, kind="mergesort")
+            if s.empty or float(s.iloc[0]) < z:
+                continue
+            vals = s.to_numpy(dtype=float)
+            k_found = 0
+            for k in range(1, min(kmax, len(vals)) + 1):
+                zk = vals[k - 1]
+                nxt = vals[k] if k < len(vals) else 0.0
+                # ★次の値が中央値のすぐ近く（z < 1）でも、比が無限大にならないよう 1 で抑える★
+                if zk >= z and zk / max(nxt, 1.0) >= ratio:
+                    k_found = k
+            if not k_found:
+                continue
+            nxt_label = s.index[k_found] if k_found < len(s) else None
+            for lab in s.index[:k_found]:
+                rows.append({
+                    "列": c,
+                    "Excel の行": _excel_row(lab),
+                    "ID": df.at[lab, id_col] if (id_col and id_col in df.columns) else None,
+                    "値": v.at[lab],
+                    "ロバスト z": round(float(rz.at[lab]), 1),
+                    "次の値": v.at[nxt_label] if nxt_label is not None else np.nan,
+                    "次の z": round(float(rz.at[nxt_label]), 1) if nxt_label is not None else np.nan,
+                    "中央値": med,
+                    "向き": side,
+                })
+    out = pd.DataFrame(rows, columns=out_cols)
+    if not (id_col and id_col in df.columns):
+        out = out.drop(columns="ID")
+    return out
+
+
+def entry_error_messages(suspects: pd.DataFrame) -> list:
+    """`suspect_entry_errors` の表を「人の確認が要る事項」の文にする（列ごとに 1 文）。
+
+    ★値と ID は「（例: [...]）」の中に書く。★ レポートは既定（show_values=False）で
+    この部分を伏せる。行番号は伏せない（直すのに要る。症例の値ではない）。
+    """
+    if suspects is None or not len(suspects):
+        return []
+    msgs = []
+    for c, g in suspects.groupby("列", sort=False):
+        where = "、".join(str(r) for r in g["Excel の行"] if r is not None and pd.notna(r))
+        vals = [f"{r['ID']}: {r['値']:g}" if "ID" in g.columns and pd.notna(r.get("ID"))
+                else f"{r['値']:g}" for _, r in g.iterrows()]
+        top = g.iloc[0]
+        nxt = (f"次に極端な値は z = {top['次の z']:g}" if pd.notna(top["次の z"])
+               else "ほかに極端な値は無い")
+        msgs.append(
+            f"★入力ミスの可能性がある値★ '{c}' の"
+            + (f" Excel の行 {where}" if where else f" {len(g)} 個の値")
+            + f"（例: [{', '.join(vals)}]）。ロバスト z = {top['ロバスト z']:g}（{nxt}）で、"
+            "ほかの値から桁違いに離れている。元の記録と照らして、誤りなら schema.yaml の "
+            f"columns: の '{c}' に plausible: [下限, 上限] を書いて再実行する"
+            "（範囲の外は NaN にして補完へ回る）。正しい値なら何もしなくてよい")
+    return msgs
 
 
 def mahalanobis_outliers(df: pd.DataFrame, columns: list | None = None,

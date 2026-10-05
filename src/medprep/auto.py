@@ -35,13 +35,24 @@ import pandas as pd
 from . import paths as _paths
 from . import rerun as _rerun
 from . import viz
-from .clean import clean_numeric, derive, derive_vintage, load_dict, normalize_times
+from .clean import (
+    USER_RANGE_ACTION,
+    CleanReport,
+    apply_ranges,
+    clean_numeric,
+    derive,
+    derive_vintage,
+    load_dict,
+    normalize_range,
+    normalize_times,
+)
 from .dates import parse_date_series
 from .describe import table_one, target_achievement
 from .horizon import choose_horizon
 from .loading import read_any
 from .missing import analyze as analyze_missing
 from .missing import drop_missing_outcome, mcar_signals
+from .outliers import ENTRY_RATIO, ENTRY_Z, entry_error_messages
 from .outliers import detect as detect_outliers
 from .pipeline import encode_binary_columns, leak_check, prepare
 from .quality import audit
@@ -83,7 +94,12 @@ COL_DROPPED = "解析から外した（列を削除）"
 COL_UNUSED = "特徴量にしなかった（列は残る）"
 
 
+#: 入力ミスの可能性がある値の判定（0.13.0〜）。schema.yaml の policy: entry_error: で変えられる
+_ENTRY_DEFAULT = {"z": ENTRY_Z, "ratio": ENTRY_RATIO}
+
+
 # ================================================================== 結果
+
 @dataclass
 class PrepResult:
     """`autoprep()` が返すもの。**「処理済みデータ」ではなく「判断の記録」である。**"""
@@ -244,6 +260,7 @@ def autoprep(
     dic: dict | None = None,
     verbose: bool = True,
     schema=None,
+    plausible: dict | None = None,
 ) -> PrepResult:
     """読み込みから前処理済み行列とレポートまでを 1 行で通す。
 
@@ -264,6 +281,11 @@ def autoprep(
         ★渡すと、その設定（run 欄: GROUP・seed・test_size など）と列の判断（role・action）を、
         ここに渡した引数より優先して使う。★ 食い違いは「人の確認が要る事項」に出る。
         同じデータ・同じ版なら結果は元と一致する（再現）。直した所だけが変わる。
+    plausible : {列名: [下限, 上限]}。人が決めた「あり得る範囲」（0.13.0〜）。
+        ★範囲の外の値は NaN にして補完へ回す（行は消さない。winsorize で丸めない）。★
+        辞書（ranges_ja.yaml）に無い列の入力ミスを止めるためのもの。片側だけなら None。
+        schema.yaml の各列の `plausible:` に残るので再現できる。schema.yaml にも書いて
+        あって食い違うときは schema.yaml を使う（食い違いは「人の確認が要る事項」に出る）。
     save_data : `save=True` のとき、掃除済みデータと前処理済み行列も書き出す。
         ★これは症例レベルのデータである。★ 置き場所には `.gitignore` を必ず置くが、
         受け渡しには注意すること。要らなければ False。
@@ -332,6 +354,7 @@ def autoprep(
         for m in msgs:
             warn(m)
     run_settings = dict(settings)          # ★τ で目的変数を作る前の値を残す★
+    ranges = _collect_ranges(given, plausible, warn)    # 人が決めた範囲（0.13.0〜）
     edits: list = []
 
     # -------------------------------------------------------- 1.5) 全部空欄の行
@@ -347,6 +370,7 @@ def autoprep(
         survival=survival, survival_dates=survival_dates, dic=dic)
     if given is not None:
         _rerun.apply_overrides(res.schema_raw, given)
+    _attach_ranges(res.schema_raw, ranges)
     step("列の役割を推定する", True,
          f"{len(res.schema_raw.columns)} 列（うち解析から外す列 "
          f"{len(res.schema_raw.dropped())} 本）")
@@ -380,6 +404,21 @@ def autoprep(
     else:
         res.df_clean = df.copy()
         step("辞書で掃除する", False, "clean=False が指定された")
+
+    # -------------------------------------------------------- 4.2) 人が決めた範囲（0.13.0〜）
+    #   ★辞書に無い列の入力ミス（2.30 → 230）は、辞書の掃除では止まらない。★
+    #   人が schema.yaml（または plausible=）に書いた範囲の外を NaN にして補完へ回す。
+    #   clean=False でも当てる（人がはっきり書いた指示だから）。派生列にも当てられるよう掃除の後に置く。
+    if ranges:
+        res.df_clean, acts, msgs = apply_ranges(res.df_clean, ranges, id_col=id_col)
+        if res.clean_report is None:
+            res.clean_report = CleanReport()
+        res.clean_report.actions += acts
+        n_nan = sum(n for _, _, n, _ in acts)
+        step("人が決めた範囲で掃除する", True,
+             f"{len(acts)} 列に範囲を当て、範囲の外 {n_nan} 個を NaN にした（★行は残る★）")
+        for m in msgs:
+            warn(m)
     dfc = res.df_clean
 
     # -------------------------------------------------------- 4.5) 日付を解釈する
@@ -405,6 +444,7 @@ def autoprep(
         survival=survival, survival_dates=survival_dates, dic=dic)
     if given is not None:
         edits = _rerun.apply_overrides(res.schema, given)
+    _attach_ranges(res.schema, ranges)
 
     # -------------------------------------------------------- 6) 生存時間の形
     if survival_dates:
@@ -479,10 +519,21 @@ def autoprep(
         step("欠損の偏りを調べる", True, f"{len(res.mcar)} 組で偏りの兆候")
 
     # -------------------------------------------------------- 8) 外れ値
+    #   ★入力ミスの可能性がある値（0.13.0〜）は「人の確認が要る事項」に出す。★
+    #   辞書に無い列では、桁の打ち間違い（2.30 → 230）が掃除の段を素通りする。
+    #   IQR の印は数十件出るのがふつうで、その中に埋もれると誰も気づかない。
+    ent = {**_ENTRY_DEFAULT, **((res.schema.policy or {}).get("entry_error") or {}),
+           **((policy or {}).get("entry_error") or {})}
     res.outliers = optional(
-        "外れ値を見る", lambda: detect_outliers(dfc, res.schema, id_col=id_col))
+        "外れ値を見る", lambda: detect_outliers(
+            dfc, res.schema, id_col=id_col,
+            entry_z=float(ent["z"]), entry_ratio=float(ent["ratio"])))
     if res.outliers is not None:
-        step("外れ値を見る", True, "検出のみ（★ここでは直さない★）")
+        ns = len(res.outliers.suspects)
+        step("外れ値を見る", True, "検出のみ（★ここでは直さない★）"
+             + (f"。★入力ミスの可能性がある値 {ns} 個★" if ns else ""))
+        for m in entry_error_messages(res.outliers.suspects):
+            warn(m)
 
     # -------------------------------------------------------- 9) Table 1
     if do_table1:
@@ -538,6 +589,7 @@ def autoprep(
                                       survival_dates=survival_dates, dic=dic)
             if given is not None:
                 edits = _rerun.apply_overrides(res.schema, given)
+            _attach_ranges(res.schema, ranges)
             # ★推定し直すと、観察期間とイベントが「ふつうの数値列」に戻る。★
             #   そのままではイベント（＝ほぼ目的変数）が説明変数に紛れ込む。役割を付け直す。
             _survival_specs(res.schema, getattr(res.survival, "unit", "years"))
@@ -661,6 +713,48 @@ def autoprep(
         if save and res.run is not None:
             print(f"  （同じ一覧を {res.run.file('report', ATTENTION_TXT)} にも書き出した）")
     return res
+
+
+def _collect_ranges(given, plausible, warn) -> dict:
+    """人が決めた範囲を集める（0.13.0〜）。schema.yaml を先に、引数を後に。
+
+    ★schema.yaml と引数で食い違えば schema.yaml を使う★（ほかの設定と同じ規則。再現のため）。
+    書き方の誤りは知らせて使わない（黙って無視すると、直したつもりで直っていない）。
+    """
+    ranges: dict = {}
+    if given is not None:
+        for c, g in given.columns.items():
+            if g.plausible is not None:
+                ranges[c] = g.plausible
+    for c, r in (plausible or {}).items():
+        if c in ranges:
+            try:
+                same = normalize_range(ranges[c]) == normalize_range(r)
+            except ValueError:
+                same = False
+            if not same:
+                warn(f"★plausible の引数 '{c}': {r!r} は使わず、schema.yaml の "
+                     f"{ranges[c]!r} を使った★")
+            continue
+        ranges[c] = r
+    out = {}
+    for c, r in ranges.items():
+        try:
+            lo, hi = normalize_range(r)
+        except ValueError as e:
+            warn(f"★'{c}' の plausible を使わなかった★ {e}")
+            continue
+        out[c] = [lo, hi]
+    return out
+
+
+def _attach_ranges(sch, ranges: dict) -> None:
+    """範囲を schema の列に書き込む（schema.yaml に残して再現できるように）。"""
+    if sch is None:
+        return
+    for c, (lo, hi) in ranges.items():
+        if c in sch.columns:
+            sch.columns[c].plausible = [lo, hi]
 
 
 def quicklook(data, **kwargs) -> PrepResult:
@@ -1687,7 +1781,9 @@ def _removed_table(res: PrepResult, dfc, outcome) -> pd.DataFrame:
             if "NaN" in str(kind) and n:
                 rows.append({"種類": "値", "対象": str(col), "件数": int(n),
                              "処置": "NaN にした（行は残る）",
-                             "理由": f"{kind}（{detail}）", "段": "辞書で掃除"})
+                             "理由": f"{kind}（{detail}）",
+                             "段": ("人が決めた範囲（schema.yaml の plausible）"
+                                   if kind == USER_RANGE_ACTION else "辞書で掃除")})
 
     cols = ["種類", "対象", "件数", "処置", "理由", "段"]
     if not rows:

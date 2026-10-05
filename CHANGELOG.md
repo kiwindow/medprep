@@ -3,6 +3,47 @@
 このファイルは [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) の体裁に従い、
 バージョンは [セマンティック バージョニング](https://semver.org/lang/ja/) に従う。
 
+## [0.13.0] — 2026-10-05
+
+### きっかけ
+California Housing（N=500）の回帰 k-fold CV で、線形回帰・Lasso・Bayesian Ridge・MLP の R² が −14 前後になった。
+原因は AveOccup の 1 値 230（ほかの 499 例は 1.4〜5.8。2.30 の打ち間違いと思われる）。これが入った fold で
+線形回帰が −96.8 を予測し、その fold の R² が −64 になった。0.12.3 では次の理由でこの値に気づけなかった。
+- 辞書（ranges_ja.yaml）に無い列なので、掃除の段で範囲を見ない
+- 外れ値の段（IQR 1.5 倍）では AveOccup の 8 件のうちの 1 件として HTML の表に載るだけで、
+  「人の確認が要る事項」には出ない。データ全体では 82 行に印が付き、その中に埋もれる
+- 前処理の winsorize で 4.7 前後に丸められるが、入力ミスを「極端な値」として扱っており、方針（入力ミスは NaN）と違う
+
+### 追加 — A. 入力ミスの可能性がある値を「人の確認が要る事項」に出す
+- `outliers.suspect_entry_errors(df, ...)`：数値列ごとに**ロバスト z**（中央値と MAD）を計算し、
+  1. |z| が `z`（既定 10）以上で、2. **次に極端な値の z の `ratio`（既定 3）倍以上離れている**値を挙げる。
+  右に裾の長い本物の極端値（人口・CRP）は次の値となだらかに続くので出ない。打ち間違い・999 のような欠損コードは
+  ほかの値から飛び離れるので出る。同じ値が 2 つ（999 が 2 例）でも、小さい側（−999）でも出す。
+  水準が 10 未満の列（コード値）は見ない。MAD が 0 の列は平均絶対偏差で代える。**データは変更しない。**
+- `outliers.robust_z(x)`、`outliers.entry_error_messages(table)` を追加。
+- `detect()` は結果を `rep.suspects` に入れる（`entry_z`・`entry_ratio` で閾値を変えられる）。
+- `autoprep` は 1 列につき 1 文を「人の確認が要る事項」（txt・xlsx・HTML 冒頭）に出す。
+  **Excel の行番号は出し、値と ID は既定（show_values=False）で伏せる。**
+  HTML の「6. 外れ値」にも、IQR の表とは別に「入力ミスの可能性がある値」の表を出す。
+- 閾値は `schema.yaml` の `policy: entry_error: {z: 10.0, ratio: 3.0}` に残る。`policy=` 引数でも変えられる。
+- California Housing N=500 では AveOccup の 334 行目（z = 343.8、次は z = 4.4）だけが出る。
+  AveBedrms の 358 行目（z 37.8、次 16.6）、Population の 235 行目（z 12.9、次 10.2）は出ない。
+
+### 追加 — B. 人が決めた「あり得る範囲」（plausible）を列ごとに書ける
+- `schema.yaml` の各列に `plausible: [下限, 上限]` を書くと、**範囲の外の値を NaN にして補完へ回す**
+  （winsorize で丸めない。行は消さない。境界ちょうどは範囲の中。片側だけなら `[null, 20]`）。
+  辞書に無い列の入力ミスを、人が 1 行書いて止めるためのもの。数値として読めない文字列には触らない。
+- `autoprep(plausible={列名: [下限, 上限]})` でも渡せる。各列の `plausible:` として schema.yaml に残るので、
+  `autoprep(schema=...)` と `mp.reproduce` で再現できる。schema.yaml と引数で食い違えば schema.yaml を使い、
+  「人の確認が要る事項」に出す。
+- NaN にした値は「人の確認が要る事項」（Excel の行番号つき）と「減らしたもの」（段＝人が決めた範囲）に残る。
+- `clean=False` でも当てる（人がはっきり書いた指示だから）。書き方の誤り・データに無い列は知らせて飛ばす（止めない）。
+- `clean.apply_ranges`・`normalize_range`・`excel_row` を追加。`ColumnSpec.plausible` を追加し、
+  `rerun.EDITABLE`・`Schema.diff` の対象にした。
+
+### テスト
+- tests/test_entry_ranges_v0130.py（35 件）を追加。全 1077 件通過、ruff 通過。
+
 ## [0.12.3] — 2026-10-04
 
 ### 変更 — Table 1 と Table 2 を別のファイルに書き出す

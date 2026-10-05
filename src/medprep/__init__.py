@@ -80,7 +80,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.12.3"
+__version__ = "0.13.0"
 __author__ = "Kazuhiro Iwadoh"
 __license__ = "MIT"
 
@@ -120,6 +120,7 @@ from .auto import (
 )
 from .clean import (
     CleanReport,
+    apply_ranges,
     build_alias_map,
     clean_numeric,
     derive,
@@ -159,7 +160,7 @@ from .horizon import HorizonResult, choose_horizon
 from .loading import read_any
 from .missing import MissingReport, drop_missing_outcome, mcar_signals
 from .missing import analyze as analyze_missing
-from .outliers import NanSafeWinsorizer, OutlierReport
+from .outliers import NanSafeWinsorizer, OutlierReport, robust_z, suspect_entry_errors
 from .outliers import detect as detect_outliers
 from .paths import RunLog, RunPaths, new_run
 from .pipeline import (
@@ -232,6 +233,7 @@ __all__ = [
     # 欠損・外れ値
     "analyze_missing", "drop_missing_outcome", "mcar_signals", "MissingReport",
     "detect_outliers", "OutlierReport", "NanSafeWinsorizer",
+    "suspect_entry_errors", "robust_z", "apply_ranges",
     # 分割と前処理（リーク防止）
     "split", "cv_splitter", "fold_summary", "mark_as", "SplitResult",
     "Preprocessor", "prepare", "Prepared", "build_preprocessor", "leak_check", "encode_binary_columns",

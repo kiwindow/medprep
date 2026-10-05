@@ -152,6 +152,9 @@ class ColumnSpec:
     order: list | None = None             # 順序尺度の並び
     value_map: dict | None = None         # 二値の対応（どちらを 1 にしたか）
     duplicate_of: str | None = None
+    #: ★人が決めた「あり得る範囲」[下限, 上限]（0.13.0〜）。★ 範囲の外は NaN にして補完へ回す。
+    #  辞書（ranges_ja.yaml）に無い列の入力ミスを止めるためのもの。片側だけなら他方を null に。
+    plausible: list | None = None
     notes: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -383,6 +386,9 @@ class Schema:
         "missing": {"numeric": "median", "categorical": "most_frequent",
                     "add_indicator": False},
         "outlier": {"method": "iqr", "fold": 1.5, "action": "winsorize"},
+        # ★入力ミスの可能性がある値の判定（0.13.0〜）。直さない。人に返すだけ。★
+        #   ロバスト z が z 以上で、次に極端な値の ratio 倍以上離れている値を挙げる。
+        "entry_error": {"z": 10.0, "ratio": 3.0},
         "encode": {"nominal": "onehot", "min_frequency": 0.01, "ordinal": "ordinal"},
         "scale": {"method": "standard"},
         "detection_limit": {"policy": "half", "keep_flag": True},
@@ -578,6 +584,8 @@ class Schema:
             "#   role   : 列の役割。drop したくなければ action を keep にする\n"
             "#   action : keep / drop\n"
             "#   reason : なぜそう判断したか（自動生成。直した場合は書き換えること）\n"
+            "#   plausible : 人が決める「あり得る範囲」[下限, 上限]（0.13.0〜）。範囲の外は NaN にして\n"
+            "#               補完へ回す。例: plausible: [0.5, 20]。片側だけなら [null, 20]\n"
             "#\n"
             "# このファイルと元データ（data/0_元データ.xlsx）と medprep の版があれば、\n"
             "# 前処理を完全に再現できる:\n"
@@ -621,7 +629,7 @@ class Schema:
             if b is None:
                 rows.append({"列名": c, "項目": "存在", "変更前": "あり", "変更後": "—"})
                 continue
-            for fld in ("role", "action", "timing", "dict_key"):
+            for fld in ("role", "action", "timing", "dict_key", "plausible"):
                 x, y = getattr(a, fld), getattr(b, fld)
                 if x != y:
                     rows.append({"列名": c, "項目": fld, "変更前": x, "変更後": y})

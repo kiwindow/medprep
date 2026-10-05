@@ -598,3 +598,100 @@ def derive(df: pd.DataFrame, dic: dict | None = None) -> tuple[pd.DataFrame, lis
     out, more = derive_dialysis(out, dic)
     notes += more
     return out, notes
+
+
+# ======================================================== 人が決めた範囲（0.13.0〜）
+def excel_row(label):
+    """index の番号から Excel の行番号を出す（見出しが 1 行目にある前提）。番号でなければ None。"""
+    if isinstance(label, (int, np.integer)) and not isinstance(label, bool):
+        return int(label) + 2
+    return None
+
+
+def normalize_range(spec) -> tuple:
+    """`plausible: [下限, 上限]` を (下限, 上限) にする。片側だけなら他方は None。
+
+    受け入れる: [0.5, 20] / (0.5, 20) / [null, 20] / [0, null]
+    ★書き方の誤りは ValueError で知らせる（黙って無視すると、直したつもりで直っていない）。★
+    """
+    if isinstance(spec, dict):
+        spec = [spec.get("low", spec.get("lower")), spec.get("high", spec.get("upper"))]
+    if not isinstance(spec, (list, tuple)) or len(spec) != 2:
+        raise ValueError(f"plausible は [下限, 上限] の 2 つで書く（書かれていたのは {spec!r}）")
+
+    def num(x):
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return None
+        if isinstance(x, bool):
+            raise ValueError(f"plausible の値に {x!r} は使えない")
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            raise ValueError(f"plausible の値が数ではない: {x!r}") from None
+
+    lo, hi = num(spec[0]), num(spec[1])
+    if lo is None and hi is None:
+        raise ValueError("plausible の下限と上限が両方とも空である")
+    if lo is not None and hi is not None and lo >= hi:
+        raise ValueError(f"plausible の下限 {lo:g} が上限 {hi:g} 以上になっている")
+    return lo, hi
+
+
+def range_text(lo, hi) -> str:
+    return f"[{'—' if lo is None else f'{lo:g}'}, {'—' if hi is None else f'{hi:g}'}]"
+
+
+#: CleanReport.actions の「処理」に入れる語（auto._removed_table が段を見分けるのに使う）
+USER_RANGE_ACTION = "人が決めた範囲の外→NaN"
+
+
+def apply_ranges(df: pd.DataFrame, ranges: dict, *, id_col: str | None = None,
+                 limit: int = 20) -> tuple[pd.DataFrame, list, list]:
+    """人が決めた「あり得る範囲」の外の値を NaN にする（0.13.0〜）。
+
+    辞書（ranges_ja.yaml）に載っていない列の入力ミス（2.30 を 230 と打った等）を、
+    人が範囲を書くことで止める。**範囲の外は NaN にして補完へ回す。**
+    winsorize で境界に丸めてはならない（入力ミスは「極端な値」ではない）。
+
+    - 境界の値そのもの（下限・上限ちょうど）は範囲の中とみなす
+    - 数値として読めない値（'12 mg' のような文字列）には触らない
+    - 行は消さない。値だけを NaN にする
+
+    Returns
+    -------
+    (データ, CleanReport.actions に足す行, 人の確認が要る事項に出す文)
+    """
+    out = df.copy()
+    actions, msgs = [], []
+    for col, spec in ranges.items():
+        try:
+            lo, hi = normalize_range(spec)
+        except ValueError as e:
+            msgs.append(f"★'{col}' の plausible を使わなかった★ {e}")
+            continue
+        if col not in out.columns:
+            msgs.append(f"★plausible を書いた列 '{col}' がデータに無い★（列名の綴りを確かめること）")
+            continue
+        v = pd.to_numeric(out[col], errors="coerce")
+        if v.notna().sum() == 0:
+            msgs.append(f"★plausible を書いた列 '{col}' に数値が無い★（範囲は当てなかった）")
+            continue
+        bad = v.notna()
+        bad &= ((v < lo) if lo is not None else False) | ((v > hi) if hi is not None else False)
+        n = int(bad.sum())
+        detail = f"{range_text(lo, hi)}（plausible。schema.yaml に残る）"
+        actions.append((col, USER_RANGE_ACTION, n, detail))
+        if not n:
+            continue
+        out[col] = out[col].mask(bad)
+        idx = out.index[bad]
+        rows = [excel_row(i) for i in idx[:limit]]
+        where = "、".join(str(r) for r in rows if r is not None)
+        ex = [f"{out.at[i, id_col]}: {v.at[i]:g}" if (id_col and id_col in out.columns)
+              else f"{v.at[i]:g}" for i in idx[:limit]]
+        more = "…" if n > limit else ""
+        msgs.append(
+            f"人が決めた範囲（plausible）{range_text(lo, hi)} の外にある '{col}' の値 {n} 個を"
+            " NaN にした。" + (f"Excel の行 {where}{more}" if where else "該当")
+            + f"（例: [{', '.join(ex)}{more}]）。行は残り、値は補完へ回る")
+    return out, actions, msgs

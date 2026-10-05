@@ -391,6 +391,20 @@ def build_report(
         if not show_values and "該当例" in t.columns:
             t = t.drop(columns=["該当例"])
         s.table(t, caption="列ごとの外れ値")
+        # ★入力ミスの可能性がある値（0.13.0〜）。IQR の印とは分けて出す。★
+        sus = getattr(outliers, "suspects", None)
+        if sus is not None and len(sus):
+            s.text("<b>★入力ミスの可能性がある値★</b> ほかの値から桁違いに離れている"
+                   "（ロバスト z が大きく、しかも次に極端な値から大きく飛び離れている）。"
+                   "元の記録と照らして、誤りなら <code>schema.yaml</code> の列に "
+                   "<code>plausible: [下限, 上限]</code> を書いて再実行する。"
+                   "範囲の外は NaN になり、補完へ回る（winsorize で丸めない）。", kind="html")
+            st = sus.copy()
+            if not show_values:
+                st = st.drop(columns=[c for c in ("値", "ID", "次の値", "中央値")
+                                      if c in st.columns])
+            s.table(st, caption="入力ミスの可能性がある値"
+                    + ("" if show_values else "（値は show_values=True で表示）"))
         for n in outliers.notes:
             s.text(f"注記: {n}", kind="note")
 
